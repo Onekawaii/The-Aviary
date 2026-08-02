@@ -57,7 +57,7 @@ class SimulationReceiptStore:
             )
             run_id = int(cur.lastrowid)
             self.ledger.connection.executemany(
-                "INSERT INTO simulation_snapshots(run_id,tick,state_json,state_sha256) VALUES(?,?,?,?,?)",
+                "INSERT INTO simulation_snapshots(run_id,tick,state_json,state_sha256) VALUES(?,?,?,?)",
                 [
                     (
                         run_id,
