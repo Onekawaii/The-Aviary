@@ -64,7 +64,13 @@ def apply_migrations(
     connection: sqlite3.Connection,
     migrations: Iterable[Migration] = MIGRATIONS,
 ) -> int:
-    """Apply pending migrations transactionally and reject migration drift."""
+    """Apply pending migrations atomically and reject migration drift.
+
+    Each migration runs inside a SQLite savepoint. Savepoints are used instead
+    of relying on sqlite3's version-dependent implicit transaction behaviour,
+    so schema DDL and its migration receipt roll back together on Python 3.10+
+    and on Termux.
+    """
     ordered = _validate_sequence(migrations)
     connection.execute("PRAGMA foreign_keys=ON")
     connection.execute(
@@ -89,17 +95,22 @@ def apply_migrations(
                 )
             continue
 
+        savepoint = f"aviary_migration_{migration.version}"
         try:
-            connection.execute("BEGIN IMMEDIATE")
+            connection.execute(f"SAVEPOINT {savepoint}")
             for statement in migration.statements:
                 connection.execute(statement)
             connection.execute(
                 "INSERT INTO schema_migrations(version,name,checksum,applied_at) VALUES(?,?,?,?)",
                 (migration.version, migration.name, migration.checksum, _utcnow()),
             )
-            connection.commit()
+            connection.execute(f"RELEASE SAVEPOINT {savepoint}")
         except sqlite3.Error as exc:
-            connection.rollback()
+            try:
+                connection.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
+                connection.execute(f"RELEASE SAVEPOINT {savepoint}")
+            except sqlite3.Error:
+                connection.rollback()
             raise RuntimeError(
                 f"migration {migration.version} ({migration.name}) failed and was rolled back"
             ) from exc
