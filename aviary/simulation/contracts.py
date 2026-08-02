@@ -3,43 +3,57 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
-from typing import Any, Mapping
+from typing import Any
 
 
 class SimulationValidationError(ValueError):
     pass
 
 
-class _FrozenJSONDict(dict[str, Any]):
-    """A JSON-serializable dictionary whose contents cannot be changed."""
+class FrozenJSONMapping(Mapping[str, Any]):
+    """Tuple-backed immutable JSON object.
 
-    def _immutable(self, *args: Any, **kwargs: Any) -> None:
-        raise TypeError("hashed simulation state is immutable")
+    This deliberately does not inherit from ``dict`` so mutable base-class
+    descriptors such as ``dict.__setitem__`` cannot bypass immutability.
+    """
 
-    __setitem__ = _immutable
-    __delitem__ = _immutable
-    clear = _immutable
-    pop = _immutable
-    popitem = _immutable
-    setdefault = _immutable
-    update = _immutable
-    __ior__ = _immutable
+    __slots__ = ("_items",)
 
-    def __deepcopy__(self, memo: dict[int, Any]) -> "_FrozenJSONDict":
+    def __init__(self, items: tuple[tuple[str, Any], ...]):
+        self._items = items
+
+    def __getitem__(self, key: str) -> Any:
+        for item_key, value in self._items:
+            if item_key == key:
+                return value
+        raise KeyError(key)
+
+    def __iter__(self) -> Iterator[str]:
+        return (key for key, _ in self._items)
+
+    def __len__(self) -> int:
+        return len(self._items)
+
+    def __repr__(self) -> str:
+        return f"FrozenJSONMapping({dict(self._items)!r})"
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> "FrozenJSONMapping":
         return self
 
 
 def _freeze_json(value: Any, field_name: str) -> Any:
     if isinstance(value, Mapping):
-        frozen: dict[str, Any] = {}
+        frozen_items: list[tuple[str, Any]] = []
         for key, item in value.items():
             if not isinstance(key, str):
                 raise SimulationValidationError(
                     f"{field_name} object keys must be strings"
                 )
-            frozen[key] = _freeze_json(item, field_name)
-        return _FrozenJSONDict(frozen)
+            frozen_items.append((key, _freeze_json(item, field_name)))
+        frozen_items.sort(key=lambda pair: pair[0])
+        return FrozenJSONMapping(tuple(frozen_items))
     if isinstance(value, (list, tuple)):
         return tuple(_freeze_json(item, field_name) for item in value)
     if value is None or isinstance(value, (str, bool, int)):
@@ -53,20 +67,30 @@ def _freeze_json(value: Any, field_name: str) -> Any:
     raise SimulationValidationError(f"{field_name} must be JSON serializable")
 
 
+def _plain_json(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return {key: _plain_json(item) for key, item in value.items()}
+    if isinstance(value, tuple):
+        return [_plain_json(item) for item in value]
+    return value
+
+
 def _canonical_json(value: Any) -> str:
     return json.dumps(
-        value,
+        _plain_json(value),
         sort_keys=True,
         separators=(",", ":"),
         allow_nan=False,
     )
 
 
-def _validated_json_object(value: Mapping[str, Any], field_name: str) -> _FrozenJSONDict:
+def _validated_json_object(
+    value: Mapping[str, Any], field_name: str
+) -> FrozenJSONMapping:
     if not isinstance(value, Mapping):
         raise SimulationValidationError(f"{field_name} must be a JSON object")
     frozen = _freeze_json(value, field_name)
-    assert isinstance(frozen, _FrozenJSONDict)
+    assert isinstance(frozen, FrozenJSONMapping)
     return frozen
 
 
