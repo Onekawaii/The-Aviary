@@ -1,6 +1,6 @@
 # Process Isolation — Perch Gate
 
-Status: In development
+Status: Engine-integrated
 
 ## Purpose
 
@@ -9,19 +9,21 @@ Run each bird in a separate Python subprocess. The council sends one JSON reques
 ## Current slice
 
 - `aviary.runtime.worker` imports exactly one registered bird module and executes one analysis request.
-- `BirdSandbox` applies a wall-clock timeout, captures crashes, parses JSON, and reconstructs a validated `BirdOpinion`.
+- `BirdSandbox` applies a wall-clock timeout, captures crashes, parses JSON, measures runtime, and reconstructs a validated `BirdOpinion`.
 - Bird identity, summary, string-list fields, confidence, and JSON-object data are validated at the process boundary.
+- `AviaryEngine` routes every bird analysis through `BirdSandbox`.
+- A failed bird marks the session `failed`, records a SHA-256 `bird_failure` receipt, and remains visible in history without becoming replayable.
 
 ## Verification
 
 ```text
-python -m unittest tests.test_runtime -v
+python -m unittest tests.test_runtime tests.test_engine_isolation -v
 python verify.py
 ```
 
 ## Demonstration
 
-A built-in Duck analysis is serialized to a subprocess, executed, returned as JSON, and reconstructed in the parent process.
+A normal council run now launches each built-in bird in its own Python subprocess. Six validated opinions return to the parent process, are recorded, and produce the normal council receipt.
 
 ## Failure cases
 
@@ -29,10 +31,11 @@ A built-in Duck analysis is serialized to a subprocess, executed, returned as JS
 - Empty output is classified as a crash.
 - Invalid JSON is rejected.
 - A mismatched `bird_id` or malformed opinion is rejected as an invalid schema.
+- Any boundary failure stops council aggregation, marks the session failed, and records a failure receipt containing the bird ID, failure kind, message, and elapsed time.
 
 ## Known limitations
 
-- The engine does not use the sandbox yet; this first commit proves the execution boundary independently.
 - This is process isolation, not a complete hostile-code sandbox. Filesystem and network restrictions are not yet enforced.
 - OS-level memory limits are not yet portable across Windows and Termux.
-- Per-bird failure receipts are added in the next integration commit.
+- Birds currently execute sequentially, so six subprocess startups increase council latency.
+- A future phase will add plugin enable/disable quarantine before third-party bird loading.
