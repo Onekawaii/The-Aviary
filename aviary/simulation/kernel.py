@@ -64,6 +64,10 @@ class DeterministicSimulation:
                 raise SimulationValidationError(
                     f"event {event.event_id!r} uses unknown effect {event.kind!r}"
                 )
+            if event.target_id not in state:
+                raise SimulationValidationError(
+                    f"event {event.event_id!r} targets unknown entity {event.target_id!r}"
+                )
         ordered_events = sorted(events, key=lambda event: (event.tick, event.event_id))
 
         max_event_tick = ordered_events[-1].tick if ordered_events else 0
