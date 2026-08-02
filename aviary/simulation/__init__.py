@@ -6,12 +6,15 @@ from aviary.simulation.contracts import (
     SimulationValidationError,
 )
 from aviary.simulation.kernel import DeterministicSimulation
+from aviary.simulation.persistence import SimulationReceiptStore, StoredSimulation
 
 __all__ = [
     "DeterministicSimulation",
     "EntityBlueprint",
     "ReplayResult",
     "SimulationEvent",
+    "SimulationReceiptStore",
     "SimulationSnapshot",
     "SimulationValidationError",
+    "StoredSimulation",
 ]
