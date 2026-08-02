@@ -1,12 +1,11 @@
 from __future__ import annotations
 
 import json
-import sqlite3
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from aviary.ledger import SQLiteLedger, canonical_json
+from aviary.ledger import SQLiteLedger, canonical_json, utcnow
 from aviary.simulation.contracts import ReplayResult, SimulationSnapshot
 
 
@@ -50,15 +49,11 @@ class SimulationReceiptStore:
             return stored.run_id
 
         final_state_json = canonical_json(_plain_json(result.final_state))
+        now = utcnow()
         with self.ledger.connection:
             cur = self.ledger.connection.execute(
                 "INSERT INTO simulation_runs(receipt_sha256,final_state_json,snapshot_count,created_at) VALUES(?,?,?,?)",
-                (
-                    result.receipt_hash,
-                    final_state_json,
-                    len(result.snapshots),
-                    __import__("aviary.ledger", fromlist=["utcnow"]).utcnow(),
-                ),
+                (result.receipt_hash, final_state_json, len(result.snapshots), now),
             )
             run_id = int(cur.lastrowid)
             self.ledger.connection.executemany(
@@ -84,7 +79,7 @@ class SimulationReceiptStore:
                             "snapshot_count": len(result.snapshots),
                         }
                     ),
-                    __import__("aviary.ledger", fromlist=["utcnow"]).utcnow(),
+                    now,
                 ),
             )
         return run_id
