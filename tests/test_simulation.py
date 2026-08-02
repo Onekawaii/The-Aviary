@@ -56,6 +56,14 @@ class SimulationTests(unittest.TestCase):
         with self.assertRaisesRegex(SimulationValidationError, "unknown entity"):
             DeterministicSimulation().replay(self.blueprints, (event,))
 
+    def test_custom_effect_missing_target_fails_in_preflight(self):
+        def no_op(state, event):
+            return {key: dict(value) for key, value in state.items()}
+
+        event = SimulationEvent("a", 0, "no_op", "missing")
+        with self.assertRaisesRegex(SimulationValidationError, "unknown entity"):
+            DeterministicSimulation({"no_op": no_op}).replay(self.blueprints, (event,))
+
     def test_event_beyond_until_tick_fails(self):
         event = SimulationEvent("a", 2, "set_property", "raven-1", {"key": "mood", "value": "x"})
         with self.assertRaisesRegex(SimulationValidationError, "exceeds"):
@@ -81,6 +89,12 @@ class SimulationTests(unittest.TestCase):
         with self.assertRaises(TypeError):
             nested |= {"value": 2}
         self.assertIsInstance(result.final_state["raven-1"]["trail"], tuple)
+
+    def test_dict_base_mutator_cannot_bypass_immutability(self):
+        result = DeterministicSimulation().replay(self.blueprints, ())
+        with self.assertRaises(TypeError):
+            dict.__setitem__(result.final_state, "changed", 1)
+        self.assertNotIn("changed", result.final_state)
 
     def test_malformed_events_are_validated_before_sorting(self):
         malformed = (
