@@ -82,6 +82,37 @@ class SQLiteLedger:
             )
         return digest
 
+    def fail_session(self, sid: int, bird_id: str, kind: str, message: str, elapsed_ms: float) -> str:
+        now = utcnow()
+        payload = canonical_json(
+            {
+                "bird_id": bird_id,
+                "kind": kind,
+                "message": message,
+                "elapsed_ms": elapsed_ms,
+            }
+        )
+        digest = sha256_text(payload)
+        with self.connection:
+            self.connection.execute(
+                "UPDATE sessions SET status='failed',finished_at=?,elapsed_ms=? WHERE id=?",
+                (now, elapsed_ms, sid),
+            )
+            self.connection.execute(
+                "INSERT INTO receipts(session_id,kind,content_json,sha256,created_at) VALUES(?,?,?,?,?)",
+                (sid, "bird_failure", payload, digest, now),
+            )
+            self.connection.execute(
+                "INSERT INTO history(event_type,entity_id,payload_json,created_at) VALUES(?,?,?,?)",
+                (
+                    "session.failed",
+                    str(sid),
+                    canonical_json({"bird_id": bird_id, "kind": kind, "sha256": digest}),
+                    now,
+                ),
+            )
+        return digest
+
     def finish_session(self, sid: int, decision: CouncilDecision, elapsed_ms: float) -> str:
         now = utcnow()
         payload = canonical_json(asdict(decision))
@@ -103,7 +134,7 @@ class SQLiteLedger:
 
     def recent_sessions(self, limit: int = 10):
         rows = self.connection.execute(
-            "SELECT s.id,t.text,s.status,s.started_at,s.elapsed_ms,r.sha256 FROM sessions s JOIN topics t ON t.id=s.topic_id LEFT JOIN receipts r ON r.session_id=s.id AND r.kind='final_report' ORDER BY s.id DESC LIMIT ?",
+            "SELECT s.id,t.text,s.status,s.started_at,s.elapsed_ms,r.sha256 FROM sessions s JOIN topics t ON t.id=s.topic_id LEFT JOIN receipts r ON r.session_id=s.id AND r.kind IN ('final_report','bird_failure') ORDER BY s.id DESC LIMIT ?",
             (limit,),
         ).fetchall()
         return [dict(row) for row in rows]
