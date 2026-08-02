@@ -9,13 +9,15 @@ Describe the single coherent change entering the sanctuary.
 
 ## Receipt Package
 
-- [ ] Source code
-- [ ] Automated tests
-- [ ] Verification command
-- [ ] Documentation
-- [ ] Demonstration
-- [ ] Failure case
-- [ ] Known limitations
+For every item, either provide the artifact or mark it `N/A` with a specific rationale. Do not invent irrelevant evidence merely to satisfy the form.
+
+- [ ] Source code — provided, or `N/A` because:
+- [ ] Automated tests — provided, or `N/A` because:
+- [ ] Verification command — provided, or `N/A` because:
+- [ ] Documentation — provided, or `N/A` because:
+- [ ] Demonstration — provided, or `N/A` because:
+- [ ] Failure case — provided, or `N/A` because:
+- [ ] Known limitations — provided, or `N/A` because:
 
 ## Verification
 
@@ -49,8 +51,10 @@ List each actionable finding and its disposition. Unresolved findings block merg
 - [ ] Post-merge workflow result recorded
 - [ ] Merge docket added under `docs/dockets/`
 
+A docket-only follow-up that changes only `docs/dockets/` is exempt from creating another docket. Any additional file change cancels that exemption.
+
 ## Rollback
 
 State the exact revert or recovery procedure.
 
-> No green run, no banana. 🍌
+> No green run, no banana. Bureaucracy must terminate. 📜🍌
