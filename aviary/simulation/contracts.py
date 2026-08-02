@@ -68,16 +68,21 @@ def _freeze_json(value: Any, field_name: str) -> Any:
 
 
 def _plain_json(value: Any) -> Any:
+    """Convert immutable simulation values into built-in JSON containers."""
+
+    if isinstance(value, FrozenJSONMapping):
+        return {key: _plain_json(item) for key, item in value._items}
     if isinstance(value, Mapping):
         return {key: _plain_json(item) for key, item in value.items()}
-    if isinstance(value, tuple):
+    if isinstance(value, (list, tuple)):
         return [_plain_json(item) for item in value]
     return value
 
 
 def _canonical_json(value: Any) -> str:
+    plain_value = _plain_json(value)
     return json.dumps(
-        _plain_json(value),
+        plain_value,
         sort_keys=True,
         separators=(",", ":"),
         allow_nan=False,
