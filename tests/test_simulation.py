@@ -61,6 +61,42 @@ class SimulationTests(unittest.TestCase):
         with self.assertRaisesRegex(SimulationValidationError, "exceeds"):
             DeterministicSimulation().replay(self.blueprints, (event,), until_tick=1)
 
+    def test_nested_non_string_object_keys_fail_before_hashing(self):
+        blueprints = (
+            EntityBlueprint("raven-1", "bird", {"nested": {1: "value"}}),
+        )
+        with self.assertRaisesRegex(SimulationValidationError, "keys must be strings"):
+            DeterministicSimulation().replay(blueprints, ())
+
+    def test_hashed_state_is_deeply_immutable(self):
+        blueprints = (
+            EntityBlueprint("raven-1", "bird", {"nested": {"value": 1}, "trail": [1, 2]}),
+        )
+        result = DeterministicSimulation().replay(blueprints, ())
+        with self.assertRaises(TypeError):
+            result.final_state["raven-1"]["nested"]["value"] = 2
+        with self.assertRaises(TypeError):
+            result.snapshots[0].state["raven-1"]["nested"]["value"] = 2
+        nested = result.final_state["raven-1"]["nested"]
+        with self.assertRaises(TypeError):
+            nested |= {"value": 2}
+        self.assertIsInstance(result.final_state["raven-1"]["trail"], tuple)
+
+    def test_malformed_events_are_validated_before_sorting(self):
+        malformed = (
+            SimulationEvent("valid", 0, "set_property", "raven-1", {"key": "mood", "value": "x"}),
+            SimulationEvent("bad-tick", "bad", "set_property", "raven-1", {"key": "mood", "value": "x"}),  # type: ignore[arg-type]
+        )
+        with self.assertRaisesRegex(SimulationValidationError, "event tick"):
+            DeterministicSimulation().replay(self.blueprints, malformed)
+
+        malformed_ids = (
+            SimulationEvent("valid", 0, "set_property", "raven-1", {"key": "mood", "value": "x"}),
+            SimulationEvent(1, 0, "set_property", "raven-1", {"key": "mood", "value": "x"}),  # type: ignore[arg-type]
+        )
+        with self.assertRaisesRegex(SimulationValidationError, "event_id"):
+            DeterministicSimulation().replay(self.blueprints, malformed_ids)
+
 
 if __name__ == "__main__":
     unittest.main()
