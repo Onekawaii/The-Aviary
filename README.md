@@ -29,6 +29,7 @@ python -m aviary --replay 1 --json
 - `aviary/engine.py`: headless execution pipeline.
 - `aviary/council.py`: replaceable aggregation and Brother Ape governance.
 - `aviary/ledger.py`: SQLite persistence, artifacts, history, and SHA-256 receipts.
+- `aviary/migrations.py`: ordered transactional schema migrations and migration receipts.
 - `aviary/cli.py`: terminal client only; it performs no reasoning.
 - `aviary/birds/`: optional dynamically discovered bird plugins.
 
@@ -37,6 +38,12 @@ python -m aviary --replay 1 --json
 Replay reconstructs the stored topic, ordered bird opinions, final ruling, actions, risks, runtime, and receipt without rerunning birds. It recomputes SHA-256 for every opinion artifact and the final report before display. Tampering produces an integrity failure instead of being silently accepted.
 
 Replay proves that stored content still matches its stored hashes. It does not prove that current bird code would generate the same result today.
+
+## Phase 1.6 — Ledger Migrations
+
+Every database records its applied schema versions in `schema_migrations`. Migration definitions carry SHA-256 checksums, execute under explicit SQLite transactions, reject historical drift, and roll back partial DDL on failure. Existing v0 databases are adopted without deleting stored topic data.
+
+Migration protocol, demonstration, failure behavior, and limitations are documented in [`docs/MIGRATIONS.md`](docs/MIGRATIONS.md).
 
 ## Receipt
 
@@ -48,14 +55,15 @@ Run:
 python verify.py
 ```
 
-Current verification: 10 automated tests plus CLI smoke and replay smoke.
+Current verification target: 14 automated tests plus CLI smoke and replay smoke.
 
 ## Known limitations
 
 1. Birds run in-process. This is architectural isolation, not an OS security sandbox.
 2. Analysis is deterministic scaffolding, not an LLM provider integration.
 3. Schema validation is structural rather than full JSON Schema validation.
-4. SQLite migrations are not versioned yet.
-5. Replay is read-only and does not rerun historical plugin code.
+4. Migration adoption does not deeply fingerprint every pre-migration legacy column definition.
+5. Migrations are forward-only; automated downgrades are not implemented.
+6. Replay is read-only and does not rerun historical plugin code.
 
 **Sanctuary law:** if `python verify.py` fails, the sanctuary is closed.
