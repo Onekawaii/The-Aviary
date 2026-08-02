@@ -86,14 +86,18 @@ def print_replay(replay: dict) -> None:
 
 
 def parse_repl_command(raw: str) -> tuple[str | None, list[str]]:
-    parts = raw.split()
-    if not parts:
+    stripped = raw.strip()
+    if not stripped:
         return None, []
-    head = parts[0].lower()
-    if head in {"replay", ":replay"}:
+
+    exact = COMMAND_ALIASES.get(stripped.lower())
+    if exact:
+        return exact, []
+
+    parts = stripped.split()
+    if parts[0].lower() in {"replay", ":replay"}:
         return "replay", parts[1:]
-    command = COMMAND_ALIASES.get(head)
-    return command, parts[1:] if command else []
+    return None, []
 
 
 def print_help() -> None:
@@ -143,7 +147,7 @@ def execute_repl_command(engine: AviaryEngine, command: str, args: list[str]) ->
         print(f"Database: {engine.ledger.path}")
         print(f"Schema: {engine.ledger.get_schema_version()}")
         print(f"Birds: {len(engine.registry.ids())}")
-        print(f"Sessions: {len(engine.ledger.recent_sessions(limit=1000000))}")
+        print(f"Sessions: {engine.ledger.count_sessions()}")
         return True
     if command == "schema":
         print(f"Ledger schema version: {engine.ledger.get_schema_version()}")
@@ -152,10 +156,7 @@ def execute_repl_command(engine: AviaryEngine, command: str, args: list[str]) ->
 
 
 def repl(engine: AviaryEngine) -> int:
-    print(
-        f"THE AVIARY {__version__}\n"
-        "Type a topic. Type help for commands."
-    )
+    print(f"THE AVIARY {__version__}\nType a topic. Type help for commands.")
     while True:
         try:
             raw = input("\naviary> ").strip()
