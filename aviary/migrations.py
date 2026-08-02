@@ -90,14 +90,16 @@ def apply_migrations(
             continue
 
         try:
-            with connection:
-                for statement in migration.statements:
-                    connection.execute(statement)
-                connection.execute(
-                    "INSERT INTO schema_migrations(version,name,checksum,applied_at) VALUES(?,?,?,?)",
-                    (migration.version, migration.name, migration.checksum, _utcnow()),
-                )
+            connection.execute("BEGIN IMMEDIATE")
+            for statement in migration.statements:
+                connection.execute(statement)
+            connection.execute(
+                "INSERT INTO schema_migrations(version,name,checksum,applied_at) VALUES(?,?,?,?)",
+                (migration.version, migration.name, migration.checksum, _utcnow()),
+            )
+            connection.commit()
         except sqlite3.Error as exc:
+            connection.rollback()
             raise RuntimeError(
                 f"migration {migration.version} ({migration.name}) failed and was rolled back"
             ) from exc
