@@ -108,6 +108,10 @@ class SQLiteLedger:
         ).fetchall()
         return [dict(row) for row in rows]
 
+    def count_sessions(self) -> int:
+        row = self.connection.execute("SELECT COUNT(*) FROM sessions").fetchone()
+        return int(row[0])
+
     def get_schema_version(self) -> int:
         return current_schema_version(self.connection)
 
