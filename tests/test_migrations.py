@@ -17,7 +17,10 @@ class MigrationTests(unittest.TestCase):
                 rows = ledger.connection.execute(
                     "SELECT version,name,checksum FROM schema_migrations ORDER BY version"
                 ).fetchall()
-                self.assertEqual([row["version"] for row in rows], [1, 2])
+                self.assertEqual(
+                    [row["version"] for row in rows],
+                    list(range(1, len(MIGRATIONS) + 1)),
+                )
                 self.assertTrue(all(len(row["checksum"]) == 64 for row in rows))
             finally:
                 ledger.close()
