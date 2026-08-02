@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import asdict, dataclass, field
+import math
+from dataclasses import dataclass, field
 from typing import Any, Mapping
 
 
@@ -10,17 +11,67 @@ class SimulationValidationError(ValueError):
     pass
 
 
+class _FrozenJSONDict(dict[str, Any]):
+    """A JSON-serializable dictionary whose contents cannot be changed."""
+
+    def _immutable(self, *args: Any, **kwargs: Any) -> None:
+        raise TypeError("hashed simulation state is immutable")
+
+    __setitem__ = _immutable
+    __delitem__ = _immutable
+    clear = _immutable
+    pop = _immutable
+    popitem = _immutable
+    setdefault = _immutable
+    update = _immutable
+    __ior__ = _immutable
+
+    def __deepcopy__(self, memo: dict[int, Any]) -> "_FrozenJSONDict":
+        return self
+
+
+def _freeze_json(value: Any, field_name: str) -> Any:
+    if isinstance(value, Mapping):
+        frozen: dict[str, Any] = {}
+        for key, item in value.items():
+            if not isinstance(key, str):
+                raise SimulationValidationError(
+                    f"{field_name} object keys must be strings"
+                )
+            frozen[key] = _freeze_json(item, field_name)
+        return _FrozenJSONDict(frozen)
+    if isinstance(value, (list, tuple)):
+        return tuple(_freeze_json(item, field_name) for item in value)
+    if value is None or isinstance(value, (str, bool, int)):
+        return value
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise SimulationValidationError(
+                f"{field_name} must contain finite JSON numbers"
+            )
+        return value
+    raise SimulationValidationError(f"{field_name} must be JSON serializable")
+
+
 def _canonical_json(value: Any) -> str:
-    return json.dumps(value, sort_keys=True, separators=(",", ":"))
+    return json.dumps(
+        value,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    )
+
+
+def _validated_json_object(value: Mapping[str, Any], field_name: str) -> _FrozenJSONDict:
+    if not isinstance(value, Mapping):
+        raise SimulationValidationError(f"{field_name} must be a JSON object")
+    frozen = _freeze_json(value, field_name)
+    assert isinstance(frozen, _FrozenJSONDict)
+    return frozen
 
 
 def _validate_json_object(value: Mapping[str, Any], field_name: str) -> None:
-    try:
-        encoded = _canonical_json(dict(value))
-    except (TypeError, ValueError) as exc:
-        raise SimulationValidationError(f"{field_name} must be JSON serializable") from exc
-    if not encoded.startswith("{"):
-        raise SimulationValidationError(f"{field_name} must be a JSON object")
+    _validated_json_object(value, field_name)
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,9 +81,9 @@ class EntityBlueprint:
     state: Mapping[str, Any] = field(default_factory=dict)
 
     def validate(self) -> None:
-        if not self.entity_id.strip():
+        if not isinstance(self.entity_id, str) or not self.entity_id.strip():
             raise SimulationValidationError("entity_id cannot be empty")
-        if not self.kind.strip():
+        if not isinstance(self.kind, str) or not self.kind.strip():
             raise SimulationValidationError("entity kind cannot be empty")
         _validate_json_object(self.state, "entity state")
 
@@ -46,13 +97,13 @@ class SimulationEvent:
     payload: Mapping[str, Any] = field(default_factory=dict)
 
     def validate(self) -> None:
-        if not self.event_id.strip():
+        if not isinstance(self.event_id, str) or not self.event_id.strip():
             raise SimulationValidationError("event_id cannot be empty")
         if not isinstance(self.tick, int) or isinstance(self.tick, bool) or self.tick < 0:
             raise SimulationValidationError("event tick must be a non-negative integer")
-        if not self.kind.strip():
+        if not isinstance(self.kind, str) or not self.kind.strip():
             raise SimulationValidationError("event kind cannot be empty")
-        if not self.target_id.strip():
+        if not isinstance(self.target_id, str) or not self.target_id.strip():
             raise SimulationValidationError("event target_id cannot be empty")
         _validate_json_object(self.payload, "event payload")
 
@@ -65,9 +116,9 @@ class SimulationSnapshot:
 
     @classmethod
     def create(cls, tick: int, state: Mapping[str, Any]) -> "SimulationSnapshot":
-        canonical = _canonical_json(state)
-        digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
-        return cls(tick=tick, state=state, state_hash=digest)
+        frozen_state = _validated_json_object(state, "snapshot state")
+        digest = hashlib.sha256(_canonical_json(frozen_state).encode("utf-8")).hexdigest()
+        return cls(tick=tick, state=frozen_state, state_hash=digest)
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,9 +133,21 @@ class ReplayResult:
         snapshots: tuple[SimulationSnapshot, ...],
         final_state: Mapping[str, Any],
     ) -> "ReplayResult":
+        frozen_final_state = _validated_json_object(final_state, "final state")
         payload = {
-            "snapshots": [asdict(snapshot) for snapshot in snapshots],
-            "final_state": final_state,
+            "snapshots": [
+                {
+                    "tick": snapshot.tick,
+                    "state": snapshot.state,
+                    "state_hash": snapshot.state_hash,
+                }
+                for snapshot in snapshots
+            ],
+            "final_state": frozen_final_state,
         }
         digest = hashlib.sha256(_canonical_json(payload).encode("utf-8")).hexdigest()
-        return cls(snapshots=snapshots, final_state=final_state, receipt_hash=digest)
+        return cls(
+            snapshots=snapshots,
+            final_state=frozen_final_state,
+            receipt_hash=digest,
+        )
