@@ -26,7 +26,7 @@ class DeterministicSimulation:
                 self.register_effect(kind, effect)
 
     def register_effect(self, kind: str, effect: Effect) -> None:
-        if not kind.strip():
+        if not isinstance(kind, str) or not kind.strip():
             raise SimulationValidationError("effect kind cannot be empty")
         if not callable(effect):
             raise SimulationValidationError("effect must be callable")
@@ -55,8 +55,7 @@ class DeterministicSimulation:
             state[blueprint.entity_id] = deepcopy(dict(blueprint.state))
 
         event_ids: set[str] = set()
-        ordered_events = sorted(events, key=lambda event: (event.tick, event.event_id))
-        for event in ordered_events:
+        for event in events:
             event.validate()
             if event.event_id in event_ids:
                 raise SimulationValidationError(f"duplicate event_id: {event.event_id}")
@@ -65,6 +64,7 @@ class DeterministicSimulation:
                 raise SimulationValidationError(
                     f"event {event.event_id!r} uses unknown effect {event.kind!r}"
                 )
+        ordered_events = sorted(events, key=lambda event: (event.tick, event.event_id))
 
         max_event_tick = ordered_events[-1].tick if ordered_events else 0
         final_tick = max_event_tick if until_tick is None else until_tick
