@@ -45,6 +45,15 @@ MIGRATIONS: tuple[Migration, ...] = (
             "CREATE INDEX IF NOT EXISTS idx_history_entity ON history(entity_id,event_type)",
         ),
     ),
+    Migration(
+        3,
+        "simulation_receipts",
+        (
+            "CREATE TABLE IF NOT EXISTS simulation_runs(id INTEGER PRIMARY KEY,receipt_sha256 TEXT NOT NULL UNIQUE,final_state_json TEXT NOT NULL,snapshot_count INTEGER NOT NULL,created_at TEXT NOT NULL)",
+            "CREATE TABLE IF NOT EXISTS simulation_snapshots(id INTEGER PRIMARY KEY,run_id INTEGER NOT NULL REFERENCES simulation_runs(id) ON DELETE CASCADE,tick INTEGER NOT NULL,state_json TEXT NOT NULL,state_sha256 TEXT NOT NULL,UNIQUE(run_id,tick))",
+            "CREATE INDEX IF NOT EXISTS idx_simulation_snapshots_run_tick ON simulation_snapshots(run_id,tick)",
+        ),
+    ),
 )
 
 
