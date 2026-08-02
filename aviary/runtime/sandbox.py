@@ -4,6 +4,7 @@ import json
 import subprocess
 import sys
 from dataclasses import dataclass
+from time import perf_counter
 from typing import Any, Mapping
 
 from aviary.contracts import BirdOpinion, Topic
@@ -73,6 +74,7 @@ class BirdSandbox:
             "topic": {"text": topic.text, "context": dict(topic.context)},
         }
         command = [sys.executable, "-m", "aviary.runtime.worker"]
+        started = perf_counter()
         try:
             completed = subprocess.run(
                 command,
@@ -88,6 +90,7 @@ class BirdSandbox:
                 "timed out",
                 f"exceeded {self.timeout_seconds:.3f}s",
             ) from exc
+        runtime_ms = round((perf_counter() - started) * 1000, 3)
 
         raw = completed.stdout.strip()
         if not raw:
@@ -119,4 +122,4 @@ class BirdSandbox:
             raise BirdExecutionError(
                 loaded.bird_id, "returned invalid schema", str(exc)
             ) from exc
-        return BirdExecutionResult(opinion=opinion, runtime_ms=0.0)
+        return BirdExecutionResult(opinion=opinion, runtime_ms=runtime_ms)
