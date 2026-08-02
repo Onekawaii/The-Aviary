@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "the-aviary"
+version = "0.1.0a0"
+description = "Local-first modular council engine with receipt replay."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.scripts]
+aviary = "aviary.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["aviary*"]
