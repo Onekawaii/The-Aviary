@@ -4,6 +4,7 @@ import importlib
 import inspect
 import json
 import sys
+from contextlib import redirect_stdout
 from dataclasses import asdict
 
 from aviary.contracts import Bird, Topic
@@ -24,13 +25,17 @@ def _load_bird(module_name: str, bird_id: str) -> Bird:
 
 
 def main() -> int:
+    protocol_stdout = sys.stdout
     try:
-        request = json.loads(sys.stdin.read())
-        bird = _load_bird(str(request["module"]), str(request["bird_id"]))
-        topic_data = request["topic"]
-        topic = Topic(str(topic_data["text"]), topic_data.get("context") or {})
-        opinion = bird.analyze(topic)
-        response = {"ok": True, "opinion": asdict(opinion)}
+        # Plugin imports and analysis may print diagnostics. Keep stdout reserved
+        # for exactly one JSON protocol response; diagnostics are sent to stderr.
+        with redirect_stdout(sys.stderr):
+            request = json.loads(sys.stdin.read())
+            bird = _load_bird(str(request["module"]), str(request["bird_id"]))
+            topic_data = request["topic"]
+            topic = Topic(str(topic_data["text"]), topic_data.get("context") or {})
+            opinion = bird.analyze(topic)
+            response = {"ok": True, "opinion": asdict(opinion)}
     except Exception as exc:
         response = {
             "ok": False,
@@ -39,7 +44,8 @@ def main() -> int:
                 "message": str(exc),
             },
         }
-    sys.stdout.write(json.dumps(response, sort_keys=True, separators=(",", ":")))
+    protocol_stdout.write(json.dumps(response, sort_keys=True, separators=(",", ":")))
+    protocol_stdout.flush()
     return 0 if response["ok"] else 1
 
 
