@@ -48,6 +48,46 @@ class SQLiteLedger:
                 (metadata.bird_id, module, payload, now),
             )
 
+    def list_plugins(self) -> list[dict[str, Any]]:
+        rows = self.connection.execute(
+            "SELECT plugin_id,module,enabled,metadata_json,discovered_at FROM plugins ORDER BY plugin_id"
+        ).fetchall()
+        return [
+            {
+                "plugin_id": row["plugin_id"],
+                "module": row["module"],
+                "enabled": bool(row["enabled"]),
+                "metadata": json.loads(row["metadata_json"]),
+                "discovered_at": row["discovered_at"],
+            }
+            for row in rows
+        ]
+
+    def enabled_plugin_ids(self) -> tuple[str, ...]:
+        rows = self.connection.execute(
+            "SELECT plugin_id FROM plugins WHERE enabled=1 ORDER BY plugin_id"
+        ).fetchall()
+        return tuple(str(row[0]) for row in rows)
+
+    def set_plugin_enabled(self, plugin_id: str, enabled: bool) -> None:
+        now = utcnow()
+        with self.connection:
+            cur = self.connection.execute(
+                "UPDATE plugins SET enabled=? WHERE plugin_id=?",
+                (1 if enabled else 0, plugin_id),
+            )
+            if cur.rowcount != 1:
+                raise LookupError(f"plugin {plugin_id!r} is not registered")
+            self.connection.execute(
+                "INSERT INTO history(event_type,entity_id,payload_json,created_at) VALUES(?,?,?,?)",
+                (
+                    "plugin.enabled" if enabled else "plugin.disabled",
+                    plugin_id,
+                    canonical_json({"enabled": enabled}),
+                    now,
+                ),
+            )
+
     def start_session(self, topic: Topic) -> int:
         now = utcnow()
         with self.connection:
@@ -84,14 +124,7 @@ class SQLiteLedger:
 
     def fail_session(self, sid: int, bird_id: str, kind: str, message: str, elapsed_ms: float) -> str:
         now = utcnow()
-        payload = canonical_json(
-            {
-                "bird_id": bird_id,
-                "kind": kind,
-                "message": message,
-                "elapsed_ms": elapsed_ms,
-            }
-        )
+        payload = canonical_json({"bird_id": bird_id, "kind": kind, "message": message, "elapsed_ms": elapsed_ms})
         digest = sha256_text(payload)
         with self.connection:
             self.connection.execute(
@@ -104,12 +137,7 @@ class SQLiteLedger:
             )
             self.connection.execute(
                 "INSERT INTO history(event_type,entity_id,payload_json,created_at) VALUES(?,?,?,?)",
-                (
-                    "session.failed",
-                    str(sid),
-                    canonical_json({"bird_id": bird_id, "kind": kind, "sha256": digest}),
-                    now,
-                ),
+                ("session.failed", str(sid), canonical_json({"bird_id": bird_id, "kind": kind, "sha256": digest}), now),
             )
         return digest
 
@@ -166,14 +194,7 @@ class SQLiteLedger:
         for item in opinion_rows:
             actual = sha256_text(item["opinion_json"])
             valid = bool(item["artifact_sha256"]) and actual == item["artifact_sha256"]
-            checks.append(
-                {
-                    "bird_id": item["bird_id"],
-                    "expected": item["artifact_sha256"],
-                    "actual": actual,
-                    "valid": valid,
-                }
-            )
+            checks.append({"bird_id": item["bird_id"], "expected": item["artifact_sha256"], "actual": actual, "valid": valid})
             opinions.append(json.loads(item["opinion_json"]))
         receipt_payload = row["receipt_json"] or row["final_json"]
         receipt_actual = sha256_text(receipt_payload)
@@ -188,11 +209,7 @@ class SQLiteLedger:
             "receipt_hash": row["receipt_sha256"],
             "integrity": {
                 "valid": receipt_valid and all(check["valid"] for check in checks),
-                "receipt": {
-                    "expected": row["receipt_sha256"],
-                    "actual": receipt_actual,
-                    "valid": receipt_valid,
-                },
+                "receipt": {"expected": row["receipt_sha256"], "actual": receipt_actual, "valid": receipt_valid},
                 "opinions": checks,
             },
         }
