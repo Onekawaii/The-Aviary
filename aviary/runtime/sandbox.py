@@ -90,6 +90,12 @@ class BirdSandbox:
                 "timed out",
                 f"exceeded {self.timeout_seconds:.3f}s",
             ) from exc
+        except OSError as exc:
+            raise BirdExecutionError(
+                loaded.bird_id,
+                "could not launch worker",
+                str(exc) or type(exc).__name__,
+            ) from exc
         runtime_ms = round((perf_counter() - started) * 1000, 3)
 
         raw = completed.stdout.strip()
