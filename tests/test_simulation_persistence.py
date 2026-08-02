@@ -50,6 +50,21 @@ class SimulationPersistenceTests(unittest.TestCase):
         ).fetchone()
         self.assertEqual(int(row[0]), 1)
 
+    def test_lone_surrogate_state_round_trips_through_sqlite(self):
+        result = DeterministicSimulation().replay(
+            (EntityBlueprint("owl-1", "bird", {"signal": "\ud800"}),),
+            (),
+        )
+        run_id = self.store.record(result)
+        stored = self.store.load(run_id)
+        self.assertTrue(stored.valid)
+        self.assertEqual(stored.result, result)
+        row = self.ledger.connection.execute(
+            "SELECT final_state_json FROM simulation_runs WHERE id=?",
+            (run_id,),
+        ).fetchone()
+        self.assertIn("\\ud800", row[0])
+
     def test_tampered_snapshot_is_reported_invalid(self):
         run_id = self.store.record(self.result)
         with self.ledger.connection:
