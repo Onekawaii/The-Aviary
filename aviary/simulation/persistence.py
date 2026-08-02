@@ -17,6 +17,23 @@ def _plain_json(value: Any) -> Any:
     return value
 
 
+def _state_json(value: Any) -> str:
+    """Serialize simulation state as SQLite-safe canonical JSON.
+
+    ``ensure_ascii=True`` escapes lone surrogates instead of leaving them in the
+    Python string passed to SQLite's UTF-8 binder. This matches the simulation
+    receipt serializer's accepted value domain.
+    """
+
+    return json.dumps(
+        _plain_json(value),
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+        allow_nan=False,
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class StoredSimulation:
     run_id: int
@@ -48,7 +65,7 @@ class SimulationReceiptStore:
                 )
             return stored.run_id
 
-        final_state_json = canonical_json(_plain_json(result.final_state))
+        final_state_json = _state_json(result.final_state)
         now = utcnow()
         with self.ledger.connection:
             cur = self.ledger.connection.execute(
@@ -62,7 +79,7 @@ class SimulationReceiptStore:
                     (
                         run_id,
                         snapshot.tick,
-                        canonical_json(_plain_json(snapshot.state)),
+                        _state_json(snapshot.state),
                         snapshot.state_hash,
                     )
                     for snapshot in result.snapshots
