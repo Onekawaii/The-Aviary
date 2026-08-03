@@ -11,6 +11,7 @@ Persist deterministic simulation results in the existing SQLite ledger without c
 - `aviary/simulation/cli.py`
 - `aviary/simulation/list_cli.py`
 - `aviary/simulation/export_cli.py`
+- `aviary/simulation/verify_export_cli.py`
 - `aviary/simulation/run_cli.py`
 - `aviary/simulation/__main__.py`
 - `aviary/simulation/__init__.py`
@@ -32,8 +33,9 @@ The preferred terminal entry point is:
 ```bash
 python -m aviary.simulation run simulation.json --db ledger/aviary.db --json
 python -m aviary.simulation list --db ledger/aviary.db --limit 20 --json
-python -m aviary.simulation export 1 --db ledger/aviary.db
+python -m aviary.simulation export 1 --db ledger/aviary.db --output receipts/run-1.json
 python -m aviary.simulation verify 1 --db ledger/aviary.db --json
+python -m aviary.simulation verify-export receipts/run-1.json --json
 ```
 
 The older module-specific entry points remain compatible.
@@ -89,6 +91,21 @@ The destination directory must already exist. The command writes and flushes a t
 
 Export returns `0` when all integrity checks pass, `1` when the run loads but integrity fails, and `2` for missing, structurally invalid, or unwritable exports. A tampered run is still exported so its failed integrity evidence can be inspected.
 
+## Export verification CLI
+
+Verify an exported receipt without opening or trusting the SQLite ledger:
+
+```bash
+python -m aviary.simulation verify-export receipts/run-1.json
+python -m aviary.simulation verify-export receipts/run-1.json --json
+```
+
+The verifier reconstructs every snapshot from its JSON state, recomputes every snapshot SHA-256, reconstructs the replay receipt, recomputes its SHA-256, and checks that the export's declared `snapshot_integrity`, `receipt_valid`, and `valid` claims match those recomputed results.
+
+A valid, internally consistent export returns `0`. A well-formed export with changed state, changed hashes, or false integrity claims returns `1`. Invalid JSON, malformed fields, invalid JSON state, or non-increasing snapshot ticks return controlled exit code `2` without a traceback.
+
+This proves internal consistency of the exported artifact. It is not a digital signature and does not prove who created the file; an attacker able to rewrite the complete artifact can recompute its hashes.
+
 ## Inspection CLI
 
 Inspect and verify a stored simulation receipt:
@@ -99,9 +116,9 @@ python -m aviary.simulation verify 1 --db ledger/aviary.db
 
 Exit codes:
 
-- `0`: the requested operation completed, or the stored receipt verifies.
-- `1`: the run loaded but integrity failed.
-- `2`: command input, persistence, stored structure, or export output was invalid.
+- `0`: the requested operation completed, or the stored/exported receipt verifies.
+- `1`: the run or exported artifact loaded but integrity failed.
+- `2`: command input, persistence, stored structure, export structure, or output was invalid.
 
 ## Verification
 
@@ -112,27 +129,30 @@ python verify.py
 Focused tests:
 
 ```bash
-python -m unittest tests.test_simulation_main_cli tests.test_simulation_list_cli tests.test_simulation_export_cli tests.test_simulation_persistence tests.test_simulation_cli tests.test_simulation_run_cli -v
+python -m unittest tests.test_simulation_main_cli tests.test_simulation_list_cli tests.test_simulation_export_cli tests.test_simulation_verify_export_cli tests.test_simulation_persistence tests.test_simulation_cli tests.test_simulation_run_cli -v
 ```
 
 ## Demonstration
 
-A JSON specification is validated, replayed deterministically, persisted, reloaded, and verified before success is reported. Persisted receipt metadata can be paged newest-first, a selected run can be exported with its complete integrity evidence to stdout or an atomically replaced file, and the same run ID can be verified independently through the unified CLI.
+A JSON specification is validated, replayed deterministically, persisted, reloaded, and verified before success is reported. Persisted receipt metadata can be paged newest-first, a selected run can be exported with its complete integrity evidence to stdout or an atomically replaced file, and that exported file can be verified independently without ledger access.
 
 ## Failure cases
 
-- Omitting the `run`, `list`, `export`, or `verify` command returns argparse exit code `2`.
+- Omitting the `run`, `list`, `export`, `verify`, or `verify-export` command returns argparse exit code `2`.
 - Invalid JSON and missing required specification fields return exit code `2` without a traceback.
 - Events targeting absent entities are rejected before replay.
 - Listing with `--limit 0` or a negative offset returns exit code `2` without a traceback.
 - Missing run IDs return CLI exit code `2`.
 - Changed snapshot state is exported with `valid: false` and returns exit code `1`.
 - An unwritable or invalid `--output` destination returns exit code `2`, leaves no temporary file, and does not replace the existing destination.
+- A changed exported snapshot, digest, or integrity claim returns exit code `1`.
+- Malformed export JSON or duplicate/out-of-order snapshot ticks return exit code `2` without a traceback.
 
 ## Known limitations
 
 - Listing reads receipt metadata only and does not verify snapshot integrity.
 - Export does not create missing destination directories.
+- Export verification proves artifact consistency, not authenticity; hashes are not signatures.
 - JSON specifications can use only effects registered by the built-in deterministic simulation engine.
 - Stored runs are not yet attached to council sessions or Arkheopantheochive scenes.
 - The database stores snapshots as canonical JSON rather than compressed blobs.

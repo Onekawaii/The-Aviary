@@ -43,6 +43,22 @@ class UnifiedSimulationCLITests(unittest.TestCase):
         self.assertEqual(result, 3)
         delegated.assert_called_once_with(["--db", "ledger/test.db", "42"])
 
+    def test_verify_export_delegates_remaining_arguments(self):
+        with patch(
+            "aviary.simulation.__main__.verify_export_cli.main", return_value=4
+        ) as delegated:
+            result = main(["verify-export", "receipt.json", "--json"])
+        self.assertEqual(result, 4)
+        delegated.assert_called_once_with(["receipt.json", "--json"])
+
+    def test_verify_export_delegates_help(self):
+        with patch(
+            "aviary.simulation.__main__.verify_export_cli.main", return_value=0
+        ) as delegated:
+            result = main(["verify-export", "--help"])
+        self.assertEqual(result, 0)
+        delegated.assert_called_once_with(["--help"])
+
     def test_command_is_required(self):
         with self.assertRaises(SystemExit) as raised:
             main([])
