@@ -26,7 +26,8 @@ def main(argv: list[str] | None = None) -> int:
     host, port = server.server_address[:2]
     print(f"AVIARY_BRIDGE_READY http://{host}:{port}", flush=True)
     print(
-        "Endpoints: GET /api/health, GET /api/birds, GET /api/simulations",
+        "Endpoints: GET /api/health, GET /api/birds, "
+        "GET /api/simulations, GET /api/simulations/{run_id}",
         flush=True,
     )
     try:
