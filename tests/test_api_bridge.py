@@ -46,11 +46,30 @@ class BridgeTests(unittest.TestCase):
     def record_simulation(self) -> int:
         result = DeterministicSimulation().replay(
             (EntityBlueprint("owl-1", "bird", {"energy": 3}),),
-            (SimulationEvent("rise", 1, "increment_property", "owl-1", {"key": "energy", "amount": 2}),),
+            (
+                SimulationEvent(
+                    "rise",
+                    1,
+                    "increment_property",
+                    "owl-1",
+                    {"key": "energy", "amount": 2},
+                ),
+            ),
         )
         ledger = SQLiteLedger(self.db_path)
         try:
             return SimulationReceiptStore(ledger).record(result)
+        finally:
+            ledger.close()
+
+    def tamper_snapshot(self, run_id: int) -> None:
+        ledger = SQLiteLedger(self.db_path)
+        try:
+            with ledger.connection:
+                ledger.connection.execute(
+                    "UPDATE simulation_snapshots SET state_json=? WHERE run_id=? AND tick=0",
+                    ('{"owl-1":{"energy":99}}', run_id),
+                )
         finally:
             ledger.close()
 
@@ -94,34 +113,65 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(body["final_state"]["owl-1"]["energy"], 5)
         self.assertEqual(len(body["snapshots"]), 2)
 
+    def test_simulation_verification_returns_only_integrity_evidence(self) -> None:
+        run_id = self.record_simulation()
+        status, body, _ = self.get_json(f"/api/simulations/{run_id}/verify")
+        self.assertEqual(status, 200)
+        self.assertEqual(body["run_id"], run_id)
+        self.assertEqual(body["snapshot_count"], 2)
+        self.assertTrue(body["receipt_valid"])
+        self.assertTrue(body["valid"])
+        self.assertTrue(all(body["snapshot_integrity"]))
+        self.assertNotIn("final_state", body)
+        self.assertNotIn("snapshots", body)
+
     def test_simulation_detail_reports_tampered_snapshot(self) -> None:
         run_id = self.record_simulation()
-        ledger = SQLiteLedger(self.db_path)
-        try:
-            with ledger.connection:
-                ledger.connection.execute(
-                    "UPDATE simulation_snapshots SET state_json=? WHERE run_id=? AND tick=0",
-                    ('{"owl-1":{"energy":99}}', run_id),
-                )
-        finally:
-            ledger.close()
+        self.tamper_snapshot(run_id)
         status, body, _ = self.get_json(f"/api/simulations/{run_id}")
         self.assertEqual(status, 200)
         self.assertFalse(body["valid"])
         self.assertFalse(body["snapshots"][0]["valid"])
 
-    def test_simulation_detail_rejects_bad_or_missing_ids(self) -> None:
-        for path in ("/api/simulations/0", "/api/simulations/nope", "/api/simulations/1?extra=1"):
+    def test_simulation_verification_reports_tampering_without_state(self) -> None:
+        run_id = self.record_simulation()
+        self.tamper_snapshot(run_id)
+        status, body, _ = self.get_json(f"/api/simulations/{run_id}/verify")
+        self.assertEqual(status, 200)
+        self.assertFalse(body["valid"])
+        self.assertFalse(body["snapshot_integrity"][0])
+        self.assertNotIn("final_state", body)
+
+    def test_simulation_paths_reject_bad_or_missing_ids(self) -> None:
+        paths = (
+            "/api/simulations/0",
+            "/api/simulations/nope",
+            "/api/simulations/1?extra=1",
+            "/api/simulations/0/verify",
+            "/api/simulations/nope/verify",
+            "/api/simulations/1/verify?extra=1",
+            "/api/simulations/1/extra",
+        )
+        for path in paths:
             with self.subTest(path=path):
                 status, body = self.read_error(path)
                 self.assertEqual(status, 400)
                 self.assertEqual(body["error"], "invalid_request")
-        status, body = self.read_error("/api/simulations/999")
-        self.assertEqual(status, 404)
-        self.assertEqual(body["error"], "simulation_not_found")
+        for path in ("/api/simulations/999", "/api/simulations/999/verify"):
+            with self.subTest(path=path):
+                status, body = self.read_error(path)
+                self.assertEqual(status, 404)
+                self.assertEqual(body["error"], "simulation_not_found")
 
     def test_simulations_rejects_invalid_query(self) -> None:
-        for query in ("limit=0", "offset=-1", "limit=9223372036854775808", "offset=9223372036854775808", "wat=1"):
+        queries = (
+            "limit=0",
+            "offset=-1",
+            "limit=9223372036854775808",
+            "offset=9223372036854775808",
+            "wat=1",
+        )
+        for query in queries:
             with self.subTest(query=query):
                 status, body = self.read_error(f"/api/simulations?{query}")
                 self.assertEqual(status, 400)
@@ -153,7 +203,10 @@ class BridgeTests(unittest.TestCase):
     def test_bridge_can_be_constructed_independently(self) -> None:
         bridge = AviaryBridge(ledger_path=self.db_path)
         self.assertEqual(bridge.health()["bird_count"], 6)
-        self.assertEqual(bridge.simulations(), {"runs": [], "count": 0, "limit": 20, "offset": 0})
+        self.assertEqual(
+            bridge.simulations(),
+            {"runs": [], "count": 0, "limit": 20, "offset": 0},
+        )
 
 
 if __name__ == "__main__":

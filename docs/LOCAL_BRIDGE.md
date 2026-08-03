@@ -46,6 +46,19 @@ Loads one persisted receipt, reconstructs every snapshot and final state, recomp
 
 A valid HTTP response can intentionally contain `"valid": false` when stored evidence was tampered with.
 
+### `GET /api/simulations/{run_id}/verify`
+
+Recomputes the same receipt and snapshot integrity checks but returns only verification evidence:
+
+- `run_id`
+- `receipt_sha256`
+- `receipt_valid`
+- `snapshot_count`
+- `snapshot_integrity`
+- aggregate `valid`
+
+This route omits reconstructed state and snapshots. It is intended for lightweight health checks and automation that need integrity status without transferring the complete receipt.
+
 ## Verification
 
 ```bash
@@ -60,11 +73,12 @@ GET http://127.0.0.1:8787/api/health
 GET http://127.0.0.1:8787/api/birds
 GET http://127.0.0.1:8787/api/simulations?limit=5&offset=0
 GET http://127.0.0.1:8787/api/simulations/1
+GET http://127.0.0.1:8787/api/simulations/1/verify
 ```
 
 ## Failure cases
 
-- Invalid pagination, invalid run IDs, out-of-range integers, and unsupported query parameters return structured HTTP 400 JSON.
+- Invalid pagination, invalid run IDs, out-of-range integers, unsupported query parameters, and malformed simulation subpaths return structured HTTP 400 JSON.
 - Missing runs return structured HTTP 404 JSON.
 - Structurally unreadable receipts return structured HTTP 409 JSON.
 - Ledger or migration failures stop startup with controlled CLI exit code 2.
@@ -75,7 +89,8 @@ GET http://127.0.0.1:8787/api/simulations/1
 ## Known limitations
 
 - Read-only endpoints only.
-- No detached artifact signature or authorship proof.
+- SHA-256 proves internal consistency, not authorship.
+- No detached artifact signature.
 - No council analysis, session, scene, or event routes yet.
 - No authentication or TLS; localhost is the default bind.
 - No browser assets or GUI are included.
