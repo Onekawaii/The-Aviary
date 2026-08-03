@@ -48,7 +48,16 @@ CAPABILITIES = (
         "path": "/api/simulations/{run_id}/verify",
         "purpose": "lightweight receipt integrity evidence",
     },
+    {
+        "method": "GET",
+        "path": "/api/simulations/{run_id}/snapshots/{tick}",
+        "purpose": "one reconstructed snapshot with integrity evidence",
+    },
 )
+
+
+class SnapshotNotFound(LookupError):
+    """Raised when a run exists but does not contain the requested tick."""
 
 
 def _plain_json(value: Any) -> Any:
@@ -68,6 +77,15 @@ def _parse_run_id(raw_id: str) -> int:
             f"simulation run id must be from 1 through {SQLITE_MAX_INTEGER}"
         )
     return run_id
+
+
+def _parse_tick(raw_tick: str) -> int:
+    if not raw_tick.isascii() or not raw_tick.isdigit():
+        raise ValueError("simulation tick must be a non-negative integer")
+    tick = int(raw_tick)
+    if not 0 <= tick <= SQLITE_MAX_INTEGER:
+        raise ValueError(f"simulation tick must be from 0 through {SQLITE_MAX_INTEGER}")
+    return tick
 
 
 class AviaryBridge:
@@ -175,6 +193,27 @@ class AviaryBridge:
         finally:
             ledger.close()
 
+    def simulation_snapshot(self, run_id: int, tick: int) -> dict[str, Any]:
+        ledger = SQLiteLedger(self.ledger_path)
+        try:
+            stored = SimulationReceiptStore(ledger).load(run_id)
+            for index, snapshot in enumerate(stored.result.snapshots):
+                if snapshot.tick == tick:
+                    return {
+                        "run_id": stored.run_id,
+                        "receipt_sha256": stored.result.receipt_hash,
+                        "receipt_valid": stored.receipt_valid,
+                        "tick": snapshot.tick,
+                        "state": _plain_json(snapshot.state),
+                        "state_sha256": snapshot.state_hash,
+                        "valid": stored.snapshot_integrity[index],
+                    }
+            raise SnapshotNotFound(
+                f"simulation snapshot not found: run_id={run_id} tick={tick}"
+            )
+        finally:
+            ledger.close()
+
 
 def _single_int_query(query: dict[str, list[str]], name: str, default: int) -> int:
     values = query.get(name)
@@ -194,7 +233,7 @@ def _single_int_query(query: dict[str, list[str]], name: str, default: int) -> i
 
 def _handler_type(bridge: AviaryBridge) -> type[BaseHTTPRequestHandler]:
     class Handler(BaseHTTPRequestHandler):
-        server_version = "AviaryBridge/0.5"
+        server_version = "AviaryBridge/0.6"
 
         def do_GET(self) -> None:  # noqa: N802
             target = urlsplit(self.path)
@@ -248,21 +287,27 @@ def _handler_type(bridge: AviaryBridge) -> type[BaseHTTPRequestHandler]:
             self._send_json(HTTPStatus.OK, payload)
 
         def _handle_simulation_path(self, path: str, raw_query: str) -> None:
-            suffix = path.removeprefix("/api/simulations/")
-            verification = suffix.endswith("/verify")
-            raw_id = suffix.removesuffix("/verify") if verification else suffix
-            if raw_query or "/" in raw_id:
-                self._send_invalid_run_id()
+            if raw_query:
+                self._send_invalid_simulation_path()
                 return
+            suffix = path.removeprefix("/api/simulations/")
+            segments = suffix.split("/")
             try:
-                run_id = _parse_run_id(raw_id)
-                payload = (
-                    bridge.simulation_verification(run_id)
-                    if verification
-                    else bridge.simulation(run_id)
-                )
+                if len(segments) == 1:
+                    run_id = _parse_run_id(segments[0])
+                    payload = bridge.simulation(run_id)
+                elif len(segments) == 2 and segments[1] == "verify":
+                    run_id = _parse_run_id(segments[0])
+                    payload = bridge.simulation_verification(run_id)
+                elif len(segments) == 3 and segments[1] == "snapshots":
+                    run_id = _parse_run_id(segments[0])
+                    tick = _parse_tick(segments[2])
+                    payload = bridge.simulation_snapshot(run_id, tick)
+                else:
+                    self._send_invalid_simulation_path()
+                    return
             except ValueError as exc:
-                if str(exc).startswith("simulation run id"):
+                if str(exc).startswith(("simulation run id", "simulation tick")):
                     self._send_json(
                         HTTPStatus.BAD_REQUEST,
                         {"error": "invalid_request", "detail": str(exc)},
@@ -272,6 +317,12 @@ def _handler_type(bridge: AviaryBridge) -> type[BaseHTTPRequestHandler]:
                         HTTPStatus.CONFLICT,
                         {"error": "simulation_invalid", "detail": str(exc)},
                     )
+                return
+            except SnapshotNotFound as exc:
+                self._send_json(
+                    HTTPStatus.NOT_FOUND,
+                    {"error": "snapshot_not_found", "detail": str(exc)},
+                )
                 return
             except LookupError as exc:
                 self._send_json(
@@ -287,12 +338,12 @@ def _handler_type(bridge: AviaryBridge) -> type[BaseHTTPRequestHandler]:
                 return
             self._send_json(HTTPStatus.OK, payload)
 
-        def _send_invalid_run_id(self) -> None:
+        def _send_invalid_simulation_path(self) -> None:
             self._send_json(
                 HTTPStatus.BAD_REQUEST,
                 {
                     "error": "invalid_request",
-                    "detail": "simulation run id must be a positive integer",
+                    "detail": "invalid simulation resource path",
                 },
             )
 
