@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sqlite3
 import sys
+import tempfile
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -40,6 +42,27 @@ def as_dict(stored: StoredSimulation) -> dict[str, Any]:
     }
 
 
+def _write_atomic(path: Path, content: str) -> None:
+    parent = path.parent
+    descriptor, temporary_name = tempfile.mkstemp(
+        dir=parent,
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        text=True,
+    )
+    temporary_path = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(content)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary_path, path)
+    except BaseException:
+        temporary_path.unlink(missing_ok=True)
+        raise
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="python -m aviary.simulation.export_cli",
@@ -47,6 +70,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("run_id", type=int)
     parser.add_argument("--db", type=Path, default=default_db_path())
+    parser.add_argument(
+        "--output",
+        type=Path,
+        help="Atomically replace this file with the exported JSON instead of writing to stdout.",
+    )
     args = parser.parse_args(argv)
 
     ledger: SQLiteLedger | None = None
@@ -60,7 +88,15 @@ def main(argv: list[str] | None = None) -> int:
         if ledger is not None:
             ledger.close()
 
-    print(json.dumps(as_dict(stored), indent=2, sort_keys=True))
+    encoded = json.dumps(as_dict(stored), indent=2, sort_keys=True)
+    try:
+        if args.output is None:
+            print(encoded)
+        else:
+            _write_atomic(args.output, encoded)
+    except OSError as exc:
+        print(f"ERROR: could not write export: {exc}", file=sys.stderr)
+        return 2
     return 0 if stored.valid else 1
 
 
