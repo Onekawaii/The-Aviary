@@ -1,17 +1,24 @@
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 import threading
 import unittest
+from pathlib import Path
+from unittest.mock import patch
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 from aviary.api import AviaryBridge, create_server
+from aviary.api.__main__ import build_parser
 
 
 class BridgeTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.server = create_server(port=0)
+        self.tempdir = tempfile.TemporaryDirectory()
+        self.db_path = Path(self.tempdir.name) / "aviary.db"
+        self.server = create_server(port=0, ledger_path=self.db_path)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
         host, port = self.server.server_address[:2]
@@ -21,11 +28,20 @@ class BridgeTests(unittest.TestCase):
         self.server.shutdown()
         self.server.server_close()
         self.thread.join(timeout=2)
+        self.tempdir.cleanup()
 
     def get_json(self, path: str) -> tuple[int, dict[str, object], dict[str, str]]:
         with urlopen(self.base + path, timeout=2) as response:
             body = json.loads(response.read().decode("utf-8"))
             return response.status, body, dict(response.headers.items())
+
+    def read_error(self, path: str) -> tuple[int, dict[str, object]]:
+        with self.assertRaises(HTTPError) as caught:
+            urlopen(self.base + path, timeout=2)
+        return (
+            caught.exception.code,
+            json.loads(caught.exception.read().decode("utf-8")),
+        )
 
     def test_health_reports_ready_service(self) -> None:
         status, body, headers = self.get_json("/api/health")
@@ -45,11 +61,37 @@ class BridgeTests(unittest.TestCase):
         self.assertIn("brother_ape", ids)
         self.assertTrue(all(bird["schema"]["type"] == "object" for bird in birds))
 
+    def test_server_initializes_ledger_before_accepting_requests(self) -> None:
+        self.assertTrue(self.db_path.exists())
+        status, body, _ = self.get_json("/api/simulations")
+        self.assertEqual(status, 200)
+        self.assertEqual(body["runs"], [])
+
+    def test_simulations_lists_empty_ledger_with_pagination(self) -> None:
+        status, body, _ = self.get_json("/api/simulations?limit=5&offset=0")
+        self.assertEqual(status, 200)
+        self.assertEqual(
+            body,
+            {"runs": [], "count": 0, "limit": 5, "offset": 0},
+        )
+        self.assertTrue(self.db_path.exists())
+
+    def test_simulations_rejects_invalid_query(self) -> None:
+        for query in (
+            "limit=0",
+            "offset=-1",
+            "limit=9223372036854775808",
+            "offset=9223372036854775808",
+            "wat=1",
+        ):
+            with self.subTest(query=query):
+                status, body = self.read_error(f"/api/simulations?{query}")
+                self.assertEqual(status, 400)
+                self.assertEqual(body["error"], "invalid_request")
+
     def test_unknown_path_is_structured_404(self) -> None:
-        with self.assertRaises(HTTPError) as caught:
-            urlopen(self.base + "/api/missing", timeout=2)
-        self.assertEqual(caught.exception.code, 404)
-        body = json.loads(caught.exception.read().decode("utf-8"))
+        status, body = self.read_error("/api/missing")
+        self.assertEqual(status, 404)
         self.assertEqual(body, {"error": "not_found", "path": "/api/missing"})
 
     def test_post_is_rejected_without_execution(self) -> None:
@@ -64,9 +106,16 @@ class BridgeTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "port"):
             create_server(port=70000)
 
+    def test_bridge_cli_honors_shared_ledger_environment_default(self) -> None:
+        configured = str(Path(self.tempdir.name) / "configured.db")
+        with patch.dict(os.environ, {"AVIARY_DB": configured}):
+            args = build_parser().parse_args([])
+        self.assertEqual(Path(args.db), Path(configured))
+
     def test_bridge_can_be_constructed_independently(self) -> None:
-        bridge = AviaryBridge()
+        bridge = AviaryBridge(ledger_path=self.db_path)
         self.assertEqual(bridge.health()["bird_count"], 6)
+        self.assertEqual(bridge.simulations(), {"runs": [], "count": 0, "limit": 20, "offset": 0})
 
 
 if __name__ == "__main__":
