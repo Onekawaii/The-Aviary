@@ -23,6 +23,14 @@ class SimulationRunCLITests(unittest.TestCase):
     def _write(self, payload):
         self.spec.write_text(json.dumps(payload), encoding="utf-8")
 
+    def _minimal_spec(self):
+        return {
+            "blueprints": [
+                {"entity_id": "raven-1", "kind": "bird", "state": {"energy": 2}}
+            ],
+            "events": [],
+        }
+
     def test_runs_records_and_verifies_json_spec(self):
         self._write(
             {
@@ -56,14 +64,7 @@ class SimulationRunCLITests(unittest.TestCase):
             ledger.close()
 
     def test_repeated_spec_is_idempotent(self):
-        self._write(
-            {
-                "blueprints": [
-                    {"entity_id": "raven-1", "kind": "bird", "state": {"energy": 2}}
-                ],
-                "events": [],
-            }
-        )
+        self._write(self._minimal_spec())
         first = io.StringIO()
         second = io.StringIO()
         with redirect_stdout(first):
@@ -109,6 +110,16 @@ class SimulationRunCLITests(unittest.TestCase):
             code = main([str(self.spec), "--db", str(self.db)])
         self.assertEqual(code, 2)
         self.assertIn("unknown entity", error.getvalue())
+
+    def test_non_sqlite_database_returns_controlled_error(self):
+        self._write(self._minimal_spec())
+        self.db.write_text("this is not a sqlite database", encoding="utf-8")
+        error = io.StringIO()
+        with redirect_stderr(error):
+            code = main([str(self.spec), "--db", str(self.db)])
+        self.assertEqual(code, 2)
+        self.assertNotIn("Traceback", error.getvalue())
+        self.assertTrue(error.getvalue().startswith("ERROR:"))
 
 
 if __name__ == "__main__":
