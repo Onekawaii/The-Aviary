@@ -14,7 +14,7 @@ from aviary.simulation import DeterministicSimulation, EntityBlueprint, Simulati
 from aviary.simulation.persistence import SimulationReceiptStore
 
 
-class SnapshotDetailRouteTests(unittest.TestCase):
+class SnapshotListRouteTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tempdir = tempfile.TemporaryDirectory()
         self.db_path = Path(self.tempdir.name) / "aviary.db"
@@ -59,21 +59,20 @@ class SnapshotDetailRouteTests(unittest.TestCase):
             urlopen(self.base + path, timeout=2)
         return caught.exception.code, json.loads(caught.exception.read().decode("utf-8"))
 
-    def test_returns_one_verified_snapshot(self) -> None:
-        status, body = self._get_json(
-            f"/api/simulations/{self.run_id}/snapshots/1"
-        )
+    def test_lists_snapshot_metadata_without_state_payloads(self) -> None:
+        status, body = self._get_json(f"/api/simulations/{self.run_id}/snapshots")
         self.assertEqual(status, 200)
         self.assertEqual(body["run_id"], self.run_id)
-        self.assertEqual(body["tick"], 1)
-        self.assertEqual(body["state"]["owl-1"]["energy"], 5)
+        self.assertEqual(body["count"], 2)
         self.assertTrue(body["receipt_valid"])
-        self.assertTrue(body["valid"])
-        self.assertEqual(len(body["state_sha256"]), 64)
-        self.assertNotIn("snapshots", body)
+        self.assertEqual([item["tick"] for item in body["snapshots"]], [0, 1])
+        for item in body["snapshots"]:
+            self.assertEqual(len(item["state_sha256"]), 64)
+            self.assertTrue(item["valid"])
+            self.assertNotIn("state", item)
         self.assertNotIn("final_state", body)
 
-    def test_reports_tampered_snapshot_without_hiding_state(self) -> None:
+    def test_reports_tampered_snapshot_integrity(self) -> None:
         ledger = SQLiteLedger(self.db_path)
         try:
             with ledger.connection:
@@ -84,48 +83,27 @@ class SnapshotDetailRouteTests(unittest.TestCase):
                 )
         finally:
             ledger.close()
-        status, body = self._get_json(
-            f"/api/simulations/{self.run_id}/snapshots/0"
-        )
+        status, body = self._get_json(f"/api/simulations/{self.run_id}/snapshots")
         self.assertEqual(status, 200)
-        self.assertEqual(body["state"]["owl-1"]["energy"], 99)
-        self.assertFalse(body["valid"])
+        self.assertFalse(body["snapshots"][0]["valid"])
+        self.assertTrue(body["snapshots"][1]["valid"])
 
-    def test_missing_snapshot_is_distinct_from_missing_run(self) -> None:
+    def test_rejects_query_parameters_and_missing_runs(self) -> None:
         status, body = self._read_error(
-            f"/api/simulations/{self.run_id}/snapshots/999"
+            f"/api/simulations/{self.run_id}/snapshots?extra=1"
         )
-        self.assertEqual(status, 404)
-        self.assertEqual(body["error"], "snapshot_not_found")
+        self.assertEqual(status, 400)
+        self.assertEqual(body["error"], "invalid_request")
 
-        status, body = self._read_error("/api/simulations/999/snapshots/0")
+        status, body = self._read_error("/api/simulations/999/snapshots")
         self.assertEqual(status, 404)
         self.assertEqual(body["error"], "simulation_not_found")
 
-    def test_rejects_invalid_ticks_and_query_parameters(self) -> None:
-        paths = (
-            f"/api/simulations/{self.run_id}/snapshots/-1",
-            f"/api/simulations/{self.run_id}/snapshots/nope",
-            f"/api/simulations/{self.run_id}/snapshots/9223372036854775808",
-            f"/api/simulations/{self.run_id}/snapshots/0?extra=1",
-            f"/api/simulations/{self.run_id}/snapshots/0/extra",
-        )
-        for path in paths:
-            with self.subTest(path=path):
-                status, body = self._read_error(path)
-                self.assertEqual(status, 400)
-                self.assertEqual(body["error"], "invalid_request")
-
-    def test_capabilities_advertise_snapshot_route(self) -> None:
+    def test_capabilities_advertise_snapshot_listing(self) -> None:
         status, body = self._get_json("/api/capabilities")
         self.assertEqual(status, 200)
-        routes = {
-            (item["method"], item["path"])
-            for item in body["capabilities"]
-        }
-        self.assertIn(
-            ("GET", "/api/simulations/{run_id}/snapshots/{tick}"), routes
-        )
+        paths = {item["path"] for item in body["capabilities"]}
+        self.assertIn("/api/simulations/{run_id}/snapshots", paths)
 
 
 if __name__ == "__main__":

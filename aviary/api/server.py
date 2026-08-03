@@ -50,6 +50,11 @@ CAPABILITIES = (
     },
     {
         "method": "GET",
+        "path": "/api/simulations/{run_id}/snapshots",
+        "purpose": "snapshot metadata with integrity evidence",
+    },
+    {
+        "method": "GET",
         "path": "/api/simulations/{run_id}/snapshots/{tick}",
         "purpose": "one reconstructed snapshot with integrity evidence",
     },
@@ -193,6 +198,28 @@ class AviaryBridge:
         finally:
             ledger.close()
 
+    def simulation_snapshots(self, run_id: int) -> dict[str, Any]:
+        ledger = SQLiteLedger(self.ledger_path)
+        try:
+            stored = SimulationReceiptStore(ledger).load(run_id)
+            snapshots = [
+                {
+                    "tick": snapshot.tick,
+                    "state_sha256": snapshot.state_hash,
+                    "valid": stored.snapshot_integrity[index],
+                }
+                for index, snapshot in enumerate(stored.result.snapshots)
+            ]
+            return {
+                "run_id": stored.run_id,
+                "receipt_sha256": stored.result.receipt_hash,
+                "receipt_valid": stored.receipt_valid,
+                "snapshots": snapshots,
+                "count": len(snapshots),
+            }
+        finally:
+            ledger.close()
+
     def simulation_snapshot(self, run_id: int, tick: int) -> dict[str, Any]:
         ledger = SQLiteLedger(self.ledger_path)
         try:
@@ -233,7 +260,7 @@ def _single_int_query(query: dict[str, list[str]], name: str, default: int) -> i
 
 def _handler_type(bridge: AviaryBridge) -> type[BaseHTTPRequestHandler]:
     class Handler(BaseHTTPRequestHandler):
-        server_version = "AviaryBridge/0.6"
+        server_version = "AviaryBridge/0.7"
 
         def do_GET(self) -> None:  # noqa: N802
             target = urlsplit(self.path)
@@ -299,6 +326,9 @@ def _handler_type(bridge: AviaryBridge) -> type[BaseHTTPRequestHandler]:
                 elif len(segments) == 2 and segments[1] == "verify":
                     run_id = _parse_run_id(segments[0])
                     payload = bridge.simulation_verification(run_id)
+                elif len(segments) == 2 and segments[1] == "snapshots":
+                    run_id = _parse_run_id(segments[0])
+                    payload = bridge.simulation_snapshots(run_id)
                 elif len(segments) == 3 and segments[1] == "snapshots":
                     run_id = _parse_run_id(segments[0])
                     tick = _parse_tick(segments[2])
