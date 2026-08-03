@@ -52,6 +52,14 @@ class SimulationCLITests(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertIn("does not exist", error.getvalue())
 
+    def test_oversized_run_id_returns_controlled_error(self):
+        error = io.StringIO()
+        with redirect_stderr(error):
+            code = main([str(2**63), "--db", str(self.db)])
+        self.assertEqual(code, 2)
+        self.assertIn("ERROR:", error.getvalue())
+        self.assertNotIn("Traceback", error.getvalue())
+
 
 if __name__ == "__main__":
     unittest.main()
