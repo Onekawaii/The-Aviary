@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import sqlite3
 
 from aviary.api.server import create_server
 from aviary.cli import default_db_path
@@ -18,7 +19,7 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         server = create_server(args.host, args.port, ledger_path=args.db)
-    except (OSError, ValueError) as exc:
+    except (OSError, RuntimeError, ValueError, sqlite3.Error) as exc:
         print(f"ERROR: {exc}")
         return 2
 
