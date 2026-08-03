@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 import threading
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 from aviary.api import AviaryBridge, create_server
+from aviary.api.__main__ import build_parser
 
 
 class BridgeTests(unittest.TestCase):
@@ -58,6 +61,12 @@ class BridgeTests(unittest.TestCase):
         self.assertIn("brother_ape", ids)
         self.assertTrue(all(bird["schema"]["type"] == "object" for bird in birds))
 
+    def test_server_initializes_ledger_before_accepting_requests(self) -> None:
+        self.assertTrue(self.db_path.exists())
+        status, body, _ = self.get_json("/api/simulations")
+        self.assertEqual(status, 200)
+        self.assertEqual(body["runs"], [])
+
     def test_simulations_lists_empty_ledger_with_pagination(self) -> None:
         status, body, _ = self.get_json("/api/simulations?limit=5&offset=0")
         self.assertEqual(status, 200)
@@ -68,12 +77,17 @@ class BridgeTests(unittest.TestCase):
         self.assertTrue(self.db_path.exists())
 
     def test_simulations_rejects_invalid_query(self) -> None:
-        status, body = self.read_error("/api/simulations?limit=0")
-        self.assertEqual(status, 400)
-        self.assertEqual(body["error"], "invalid_request")
-        status, body = self.read_error("/api/simulations?wat=1")
-        self.assertEqual(status, 400)
-        self.assertEqual(body["error"], "invalid_request")
+        for query in (
+            "limit=0",
+            "offset=-1",
+            "limit=9223372036854775808",
+            "offset=9223372036854775808",
+            "wat=1",
+        ):
+            with self.subTest(query=query):
+                status, body = self.read_error(f"/api/simulations?{query}")
+                self.assertEqual(status, 400)
+                self.assertEqual(body["error"], "invalid_request")
 
     def test_unknown_path_is_structured_404(self) -> None:
         status, body = self.read_error("/api/missing")
@@ -91,6 +105,12 @@ class BridgeTests(unittest.TestCase):
             create_server(host="", port=0)
         with self.assertRaisesRegex(ValueError, "port"):
             create_server(port=70000)
+
+    def test_bridge_cli_honors_shared_ledger_environment_default(self) -> None:
+        configured = str(Path(self.tempdir.name) / "configured.db")
+        with patch.dict(os.environ, {"AVIARY_DB": configured}):
+            args = build_parser().parse_args([])
+        self.assertEqual(Path(args.db), Path(configured))
 
     def test_bridge_can_be_constructed_independently(self) -> None:
         bridge = AviaryBridge(ledger_path=self.db_path)
