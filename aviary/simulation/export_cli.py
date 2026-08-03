@@ -4,12 +4,21 @@ import argparse
 import json
 import sqlite3
 import sys
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
 from aviary.cli import default_db_path
 from aviary.ledger import SQLiteLedger
 from aviary.simulation.persistence import SimulationReceiptStore, StoredSimulation
+
+
+def _plain(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return {str(key): _plain(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_plain(item) for item in value]
+    return value
 
 
 def as_dict(stored: StoredSimulation) -> dict[str, Any]:
@@ -22,12 +31,12 @@ def as_dict(stored: StoredSimulation) -> dict[str, Any]:
         "snapshots": [
             {
                 "tick": snapshot.tick,
-                "state": snapshot.state,
+                "state": _plain(snapshot.state),
                 "state_sha256": snapshot.state_hash,
             }
             for snapshot in stored.result.snapshots
         ],
-        "final_state": stored.result.final_state,
+        "final_state": _plain(stored.result.final_state),
     }
 
 
