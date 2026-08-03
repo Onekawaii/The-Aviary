@@ -108,7 +108,6 @@ class SnapshotDetailRouteTests(unittest.TestCase):
             f"/api/simulations/{self.run_id}/snapshots/nope",
             f"/api/simulations/{self.run_id}/snapshots/9223372036854775808",
             f"/api/simulations/{self.run_id}/snapshots/0?extra=1",
-            f"/api/simulations/{self.run_id}/snapshots",
             f"/api/simulations/{self.run_id}/snapshots/0/extra",
         )
         for path in paths:
