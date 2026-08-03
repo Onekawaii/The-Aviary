@@ -46,6 +46,14 @@ class StoredSimulation:
         return self.receipt_valid and all(self.snapshot_integrity)
 
 
+@dataclass(frozen=True, slots=True)
+class SimulationRunSummary:
+    run_id: int
+    receipt_sha256: str
+    snapshot_count: int
+    created_at: str
+
+
 class SimulationReceiptStore:
     """Persist and verify deterministic simulation results in the Aviary ledger."""
 
@@ -100,6 +108,26 @@ class SimulationReceiptStore:
                 ),
             )
         return run_id
+
+    def list_runs(self, *, limit: int = 20, offset: int = 0) -> tuple[SimulationRunSummary, ...]:
+        if limit < 1:
+            raise ValueError("limit must be at least 1")
+        if offset < 0:
+            raise ValueError("offset must be non-negative")
+        rows = self.ledger.connection.execute(
+            "SELECT id,receipt_sha256,snapshot_count,created_at "
+            "FROM simulation_runs ORDER BY id DESC LIMIT ? OFFSET ?",
+            (limit, offset),
+        ).fetchall()
+        return tuple(
+            SimulationRunSummary(
+                run_id=int(row["id"]),
+                receipt_sha256=str(row["receipt_sha256"]),
+                snapshot_count=int(row["snapshot_count"]),
+                created_at=str(row["created_at"]),
+            )
+            for row in rows
+        )
 
     def load(self, run_id: int) -> StoredSimulation:
         row = self.ledger.connection.execute(
