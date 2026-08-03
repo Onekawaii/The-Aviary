@@ -18,7 +18,13 @@ class SimulationExportCLITests(unittest.TestCase):
         ledger = SQLiteLedger(self.db)
         try:
             result = DeterministicSimulation().replay(
-                (EntityBlueprint("raven-1", "bird", {"energy": 2}),),
+                (
+                    EntityBlueprint(
+                        "raven-1",
+                        "bird",
+                        {"energy": 2, "traits": {"calls": ["awk"]}},
+                    ),
+                ),
                 (SimulationEvent("gain", 0, "increment_property", "raven-1", {"key": "energy", "amount": 3}),),
             )
             self.run_id = SimulationReceiptStore(ledger).record(result)
@@ -36,7 +42,9 @@ class SimulationExportCLITests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertTrue(payload["valid"])
         self.assertEqual(payload["final_state"]["raven-1"]["energy"], 5)
+        self.assertEqual(payload["final_state"]["raven-1"]["traits"]["calls"], ["awk"])
         self.assertEqual(payload["snapshots"][0]["tick"], 0)
+        self.assertEqual(payload["snapshots"][0]["state"]["raven-1"]["traits"]["calls"], ["awk"])
         self.assertIn("state_sha256", payload["snapshots"][0])
 
     def test_tampered_receipt_exports_evidence_and_returns_one(self):
