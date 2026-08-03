@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sqlite3
 import sys
 from pathlib import Path
 from typing import Any
@@ -102,16 +103,18 @@ def main(argv: list[str] | None = None) -> int:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2
 
-    ledger = SQLiteLedger(args.db)
+    ledger: SQLiteLedger | None = None
     try:
+        ledger = SQLiteLedger(args.db)
         store = SimulationReceiptStore(ledger)
         run_id = store.record(result)
         stored = store.load(run_id)
-    except (LookupError, ValueError, OverflowError) as exc:
+    except (OSError, sqlite3.Error, LookupError, ValueError, OverflowError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2
     finally:
-        ledger.close()
+        if ledger is not None:
+            ledger.close()
 
     payload = {
         "run_id": run_id,
