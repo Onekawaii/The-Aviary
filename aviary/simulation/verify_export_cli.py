@@ -38,12 +38,12 @@ def _require_bool(value: Any, field_name: str) -> bool:
 
 
 def _require_hash(value: Any, field_name: str) -> str:
-    if not isinstance(value, str) or len(value) != 64:
+    if (
+        not isinstance(value, str)
+        or len(value) != 64
+        or any(character not in "0123456789abcdefABCDEF" for character in value)
+    ):
         raise ValueError(f"{field_name} must be a 64-character SHA-256 hex digest")
-    try:
-        int(value, 16)
-    except ValueError as exc:
-        raise ValueError(f"{field_name} must be a 64-character SHA-256 hex digest") from exc
     return value.lower()
 
 
@@ -141,7 +141,14 @@ def main(argv: list[str] | None = None) -> int:
     try:
         payload = json.loads(args.export.read_text(encoding="utf-8"))
         result = verify_payload(payload)
-    except (OSError, UnicodeError, json.JSONDecodeError, SimulationValidationError, ValueError) as exc:
+    except (
+        OSError,
+        UnicodeError,
+        json.JSONDecodeError,
+        SimulationValidationError,
+        ValueError,
+        RecursionError,
+    ) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2
 
