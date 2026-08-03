@@ -51,6 +51,15 @@ class SimulationListTests(unittest.TestCase):
         self.assertIn("limit must be at least 1", error.getvalue())
         ledger_type.return_value.close.assert_called_once_with()
 
+    @patch("aviary.simulation.list_cli.SQLiteLedger", side_effect=RuntimeError("migration drift"))
+    def test_cli_reports_migration_failure_without_traceback(self, ledger_type):
+        error = io.StringIO()
+        with redirect_stderr(error):
+            result = main(["--json"])
+        self.assertEqual(result, 2)
+        self.assertIn("ERROR: migration drift", error.getvalue())
+        ledger_type.assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main()
