@@ -12,6 +12,9 @@ from urllib.request import Request, urlopen
 
 from aviary.api import AviaryBridge, create_server
 from aviary.api.__main__ import build_parser
+from aviary.ledger import SQLiteLedger
+from aviary.simulation import DeterministicSimulation, EntityBlueprint, SimulationEvent
+from aviary.simulation.persistence import SimulationReceiptStore
 
 
 class BridgeTests(unittest.TestCase):
@@ -38,10 +41,18 @@ class BridgeTests(unittest.TestCase):
     def read_error(self, path: str) -> tuple[int, dict[str, object]]:
         with self.assertRaises(HTTPError) as caught:
             urlopen(self.base + path, timeout=2)
-        return (
-            caught.exception.code,
-            json.loads(caught.exception.read().decode("utf-8")),
+        return caught.exception.code, json.loads(caught.exception.read().decode("utf-8"))
+
+    def record_simulation(self) -> int:
+        result = DeterministicSimulation().replay(
+            (EntityBlueprint("owl-1", "bird", {"energy": 3}),),
+            (SimulationEvent("rise", 1, "increment_property", "owl-1", {"key": "energy", "amount": 2}),),
         )
+        ledger = SQLiteLedger(self.db_path)
+        try:
+            return SimulationReceiptStore(ledger).record(result)
+        finally:
+            ledger.close()
 
     def test_health_reports_ready_service(self) -> None:
         status, body, headers = self.get_json("/api/health")
@@ -70,20 +81,47 @@ class BridgeTests(unittest.TestCase):
     def test_simulations_lists_empty_ledger_with_pagination(self) -> None:
         status, body, _ = self.get_json("/api/simulations?limit=5&offset=0")
         self.assertEqual(status, 200)
-        self.assertEqual(
-            body,
-            {"runs": [], "count": 0, "limit": 5, "offset": 0},
-        )
-        self.assertTrue(self.db_path.exists())
+        self.assertEqual(body, {"runs": [], "count": 0, "limit": 5, "offset": 0})
+
+    def test_simulation_detail_returns_verified_receipt(self) -> None:
+        run_id = self.record_simulation()
+        status, body, _ = self.get_json(f"/api/simulations/{run_id}")
+        self.assertEqual(status, 200)
+        self.assertEqual(body["run_id"], run_id)
+        self.assertTrue(body["receipt_valid"])
+        self.assertTrue(body["valid"])
+        self.assertTrue(all(body["snapshot_integrity"]))
+        self.assertEqual(body["final_state"]["owl-1"]["energy"], 5)
+        self.assertEqual(len(body["snapshots"]), 2)
+
+    def test_simulation_detail_reports_tampered_snapshot(self) -> None:
+        run_id = self.record_simulation()
+        ledger = SQLiteLedger(self.db_path)
+        try:
+            with ledger.connection:
+                ledger.connection.execute(
+                    "UPDATE simulation_snapshots SET state_json=? WHERE run_id=? AND tick=0",
+                    ('{"owl-1":{"energy":99}}', run_id),
+                )
+        finally:
+            ledger.close()
+        status, body, _ = self.get_json(f"/api/simulations/{run_id}")
+        self.assertEqual(status, 200)
+        self.assertFalse(body["valid"])
+        self.assertFalse(body["snapshots"][0]["valid"])
+
+    def test_simulation_detail_rejects_bad_or_missing_ids(self) -> None:
+        for path in ("/api/simulations/0", "/api/simulations/nope", "/api/simulations/1?extra=1"):
+            with self.subTest(path=path):
+                status, body = self.read_error(path)
+                self.assertEqual(status, 400)
+                self.assertEqual(body["error"], "invalid_request")
+        status, body = self.read_error("/api/simulations/999")
+        self.assertEqual(status, 404)
+        self.assertEqual(body["error"], "simulation_not_found")
 
     def test_simulations_rejects_invalid_query(self) -> None:
-        for query in (
-            "limit=0",
-            "offset=-1",
-            "limit=9223372036854775808",
-            "offset=9223372036854775808",
-            "wat=1",
-        ):
+        for query in ("limit=0", "offset=-1", "limit=9223372036854775808", "offset=9223372036854775808", "wat=1"):
             with self.subTest(query=query):
                 status, body = self.read_error(f"/api/simulations?{query}")
                 self.assertEqual(status, 400)

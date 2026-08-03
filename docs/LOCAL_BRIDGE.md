@@ -2,9 +2,7 @@
 
 ## Purpose
 
-Expose existing Aviary contracts to local clients without moving reasoning into the browser.
-
-The bridge remains read-only.
+Expose existing Aviary contracts to local clients without moving reasoning into the browser. The bridge remains read-only.
 
 ## Run
 
@@ -12,20 +10,9 @@ The bridge remains read-only.
 python -m aviary.api
 ```
 
-Default address:
+Default address: `http://127.0.0.1:8787`
 
-```text
-http://127.0.0.1:8787
-```
-
-The bridge uses the same ledger resolution as the main Aviary CLI. Set `AVIARY_DB` to select a shared ledger, or pass `--db` explicitly:
-
-```bash
-AVIARY_DB=ledger/aviary.db python -m aviary.api
-python -m aviary.api --host 127.0.0.1 --port 8080 --db ledger/aviary.db
-```
-
-Ledger initialization and migrations complete before the threaded HTTP server begins accepting requests.
+The bridge uses the same ledger resolution as the main CLI. Set `AVIARY_DB` or pass `--db` explicitly. Ledger initialization and migrations complete before threaded request handling begins.
 
 ## Endpoints
 
@@ -35,58 +22,60 @@ Reports bridge status, API version, and discovered bird count.
 
 ### `GET /api/birds`
 
-Returns each discovered bird's ID, module, metadata, voice, and JSON schema.
+Returns discovered bird contracts.
 
 ### `GET /api/simulations`
 
 Lists persisted simulation receipt summaries newest-first.
 
-Optional pagination:
-
 ```text
 /api/simulations?limit=20&offset=0
 ```
 
-Each entry contains the run ID, receipt SHA-256, snapshot count, and creation timestamp. The endpoint lists metadata only; it does not claim receipt integrity verification.
+Listing metadata does not claim integrity verification.
 
-`limit` must be positive and `offset` must be non-negative. Both values must fit SQLite's signed 64-bit integer range.
+### `GET /api/simulations/{run_id}`
+
+Loads one persisted receipt, reconstructs every snapshot and final state, recomputes receipt integrity, and returns:
+
+- `receipt_sha256`
+- `receipt_valid`
+- per-snapshot `state_sha256` and `valid`
+- aggregate `valid`
+- reconstructed snapshots and final state
+
+A valid HTTP response can intentionally contain `"valid": false` when stored evidence was tampered with.
 
 ## Verification
 
 ```bash
 python verify.py
-```
-
-Focused:
-
-```bash
 python -m unittest tests.test_api_bridge -v
 ```
 
 ## Demonstration
 
-Start the bridge and open:
-
 ```text
-http://127.0.0.1:8787/api/health
-http://127.0.0.1:8787/api/birds
-http://127.0.0.1:8787/api/simulations?limit=5&offset=0
+GET http://127.0.0.1:8787/api/health
+GET http://127.0.0.1:8787/api/birds
+GET http://127.0.0.1:8787/api/simulations?limit=5&offset=0
+GET http://127.0.0.1:8787/api/simulations/1
 ```
 
 ## Failure cases
 
-- Invalid pagination, out-of-range integers, or unsupported query parameters return structured HTTP 400 JSON.
+- Invalid pagination, invalid run IDs, out-of-range integers, and unsupported query parameters return structured HTTP 400 JSON.
+- Missing runs return structured HTTP 404 JSON.
+- Structurally unreadable receipts return structured HTTP 409 JSON.
 - Ledger or migration failures stop startup with controlled CLI exit code 2.
 - Runtime ledger failures return structured HTTP 500 JSON without a traceback.
 - Unknown paths return structured HTTP 404 JSON.
 - POST requests return structured HTTP 405 JSON and execute nothing.
-- Empty hosts and invalid ports fail before binding.
-- Bind failures return controlled CLI exit code 2.
 
 ## Known limitations
 
 - Read-only endpoints only.
-- Listing simulation metadata does not verify receipt integrity.
-- No council analysis, session, replay-detail, scene, or event routes yet.
-- No authentication or TLS; the bridge binds to localhost by default.
+- No detached artifact signature or authorship proof.
+- No council analysis, session, scene, or event routes yet.
+- No authentication or TLS; localhost is the default bind.
 - No browser assets or GUI are included.
