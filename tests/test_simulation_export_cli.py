@@ -47,6 +47,35 @@ class SimulationExportCLITests(unittest.TestCase):
         self.assertEqual(payload["snapshots"][0]["state"]["raven-1"]["traits"]["calls"], ["awk"])
         self.assertIn("state_sha256", payload["snapshots"][0])
 
+    def test_writes_export_to_file_without_stdout(self):
+        destination = Path(self.tmp.name) / "receipt.json"
+        destination.write_text("old content", encoding="utf-8")
+        output = io.StringIO()
+        with redirect_stdout(output):
+            code = main(
+                [str(self.run_id), "--db", str(self.db), "--output", str(destination)]
+            )
+        payload = json.loads(destination.read_text(encoding="utf-8"))
+        self.assertEqual(code, 0)
+        self.assertEqual(output.getvalue(), "")
+        self.assertTrue(payload["valid"])
+        self.assertEqual(payload["run_id"], self.run_id)
+        self.assertEqual(list(destination.parent.glob(f".{destination.name}.*.tmp")), [])
+
+    def test_output_failure_is_controlled_and_preserves_existing_path(self):
+        destination = Path(self.tmp.name) / "existing-directory"
+        destination.mkdir()
+        error = io.StringIO()
+        with redirect_stderr(error):
+            code = main(
+                [str(self.run_id), "--db", str(self.db), "--output", str(destination)]
+            )
+        self.assertEqual(code, 2)
+        self.assertTrue(destination.is_dir())
+        self.assertIn("could not write export", error.getvalue())
+        self.assertNotIn("Traceback", error.getvalue())
+        self.assertEqual(list(destination.parent.glob(f".{destination.name}.*.tmp")), [])
+
     def test_tampered_receipt_exports_evidence_and_returns_one(self):
         ledger = SQLiteLedger(self.db)
         try:
