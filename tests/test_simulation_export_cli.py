@@ -1,9 +1,11 @@
 import io
 import json
+import os
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
+from unittest.mock import patch
 
 from aviary.ledger import SQLiteLedger
 from aviary.simulation import DeterministicSimulation, EntityBlueprint, SimulationEvent
@@ -47,20 +49,48 @@ class SimulationExportCLITests(unittest.TestCase):
         self.assertEqual(payload["snapshots"][0]["state"]["raven-1"]["traits"]["calls"], ["awk"])
         self.assertIn("state_sha256", payload["snapshots"][0])
 
-    def test_writes_export_to_file_without_stdout(self):
+    def test_writes_export_to_file_without_stdout_and_syncs_directory(self):
         destination = Path(self.tmp.name) / "receipt.json"
         destination.write_text("old content", encoding="utf-8")
         output = io.StringIO()
-        with redirect_stdout(output):
-            code = main(
-                [str(self.run_id), "--db", str(self.db), "--output", str(destination)]
-            )
+        with patch("aviary.simulation.export_cli.os.fsync", wraps=os.fsync) as fsync:
+            with redirect_stdout(output):
+                code = main(
+                    [str(self.run_id), "--db", str(self.db), "--output", str(destination)]
+                )
         payload = json.loads(destination.read_text(encoding="utf-8"))
         self.assertEqual(code, 0)
         self.assertEqual(output.getvalue(), "")
         self.assertTrue(payload["valid"])
         self.assertEqual(payload["run_id"], self.run_id)
+        self.assertEqual(fsync.call_count, 2)
         self.assertEqual(list(destination.parent.glob(f".{destination.name}.*.tmp")), [])
+
+    def test_rejects_output_that_is_the_ledger(self):
+        original = self.db.read_bytes()
+        error = io.StringIO()
+        with redirect_stderr(error):
+            code = main(
+                [str(self.run_id), "--db", str(self.db), "--output", str(self.db)]
+            )
+        self.assertEqual(code, 2)
+        self.assertEqual(self.db.read_bytes(), original)
+        self.assertIn("must not refer to the ledger", error.getvalue())
+        self.assertNotIn("Traceback", error.getvalue())
+
+    def test_rejects_hard_link_alias_of_the_ledger(self):
+        alias = Path(self.tmp.name) / "ledger-alias.db"
+        os.link(self.db, alias)
+        original = self.db.read_bytes()
+        error = io.StringIO()
+        with redirect_stderr(error):
+            code = main(
+                [str(self.run_id), "--db", str(self.db), "--output", str(alias)]
+            )
+        self.assertEqual(code, 2)
+        self.assertEqual(self.db.read_bytes(), original)
+        self.assertIn("must not refer to the ledger", error.getvalue())
+        self.assertNotIn("Traceback", error.getvalue())
 
     def test_output_failure_is_controlled_and_preserves_existing_path(self):
         destination = Path(self.tmp.name) / "existing-directory"
