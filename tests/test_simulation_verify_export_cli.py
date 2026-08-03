@@ -87,6 +87,32 @@ class SimulationVerifyExportCLITests(unittest.TestCase):
         self.assertIn("strictly increasing", error.getvalue())
         self.assertNotIn("Traceback", error.getvalue())
 
+    def test_signed_hash_returns_controlled_malformed_error(self):
+        self.payload["receipt_sha256"] = "+" + "0" * 63
+        self.write_payload()
+        error = io.StringIO()
+        with redirect_stderr(error):
+            code = main([str(self.path)])
+        self.assertEqual(code, 2)
+        self.assertIn("64-character SHA-256 hex digest", error.getvalue())
+        self.assertNotIn("Traceback", error.getvalue())
+
+    def test_excessive_json_nesting_returns_controlled_error(self):
+        nested = "[" * 2000 + "0" + "]" * 2000
+        self.path.write_text(
+            '{"run_id":1,"valid":true,"receipt_valid":true,'
+            '"receipt_sha256":"' + "0" * 64 + '",'
+            '"snapshot_integrity":[],"snapshots":[],'
+            '"final_state":{"nested":' + nested + "}}",
+            encoding="utf-8",
+        )
+        error = io.StringIO()
+        with redirect_stderr(error):
+            code = main([str(self.path)])
+        self.assertEqual(code, 2)
+        self.assertIn("ERROR:", error.getvalue())
+        self.assertNotIn("Traceback", error.getvalue())
+
     def test_malformed_json_returns_controlled_error(self):
         self.path.write_text("{not-json", encoding="utf-8")
         error = io.StringIO()
