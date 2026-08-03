@@ -14,6 +14,9 @@ from aviary.registry import BirdRegistry
 from aviary.simulation.persistence import SimulationReceiptStore
 
 
+SQLITE_MAX_INTEGER = (1 << 63) - 1
+
+
 class AviaryBridge:
     """Read-only application boundary for local Aviary clients."""
 
@@ -26,6 +29,15 @@ class AviaryBridge:
         if registry is None:
             self.registry.discover()
         self.ledger_path = Path(ledger_path)
+        self._initialize_ledger()
+
+    def _initialize_ledger(self) -> None:
+        """Complete ledger migrations before threaded request handling begins."""
+        ledger = SQLiteLedger(self.ledger_path)
+        try:
+            SimulationReceiptStore(ledger)
+        finally:
+            ledger.close()
 
     def health(self) -> dict[str, Any]:
         return {
@@ -71,9 +83,15 @@ def _single_int_query(query: dict[str, list[str]], name: str, default: int) -> i
     if len(values) != 1:
         raise ValueError(f"{name} must be supplied once")
     try:
-        return int(values[0])
+        value = int(values[0])
     except ValueError as exc:
         raise ValueError(f"{name} must be an integer") from exc
+    minimum = 1 if name == "limit" else 0
+    if not minimum <= value <= SQLITE_MAX_INTEGER:
+        raise ValueError(
+            f"{name} must be from {minimum} through {SQLITE_MAX_INTEGER}"
+        )
+    return value
 
 
 def _handler_type(bridge: AviaryBridge) -> type[BaseHTTPRequestHandler]:
