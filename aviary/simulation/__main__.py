@@ -4,7 +4,7 @@ import argparse
 from collections.abc import Sequence
 
 from aviary.simulation import cli as verify_cli
-from aviary.simulation import export_cli, list_cli, run_cli
+from aviary.simulation import export_cli, list_cli, run_cli, verify_export_cli
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -33,6 +33,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="load and verify a persisted simulation receipt",
         add_help=False,
     )
+    subparsers.add_parser(
+        "verify-export",
+        help="independently verify an exported simulation receipt JSON file",
+        add_help=False,
+    )
 
     parsed, delegated_args = parser.parse_known_args(list(argv) if argv is not None else None)
     if parsed.command == "run":
@@ -41,6 +46,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return list_cli.main(delegated_args)
     if parsed.command == "export":
         return export_cli.main(delegated_args)
+    if parsed.command == "verify-export":
+        return verify_export_cli.main(delegated_args)
     return verify_cli.main(delegated_args)
 
 
