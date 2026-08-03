@@ -42,6 +42,12 @@ def as_dict(stored: StoredSimulation) -> dict[str, Any]:
     }
 
 
+def _paths_alias(left: Path, right: Path) -> bool:
+    if left.exists() and right.exists():
+        return os.path.samefile(left, right)
+    return left.resolve(strict=False) == right.resolve(strict=False)
+
+
 def _write_atomic(path: Path, content: str) -> None:
     parent = path.parent
     descriptor, temporary_name = tempfile.mkstemp(
@@ -58,6 +64,11 @@ def _write_atomic(path: Path, content: str) -> None:
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(temporary_path, path)
+        directory_descriptor = os.open(parent, os.O_RDONLY)
+        try:
+            os.fsync(directory_descriptor)
+        finally:
+            os.close(directory_descriptor)
     except BaseException:
         temporary_path.unlink(missing_ok=True)
         raise
@@ -76,6 +87,13 @@ def main(argv: list[str] | None = None) -> int:
         help="Atomically replace this file with the exported JSON instead of writing to stdout.",
     )
     args = parser.parse_args(argv)
+
+    try:
+        if args.output is not None and _paths_alias(args.output, args.db):
+            raise ValueError("export output must not refer to the ledger database")
+    except (OSError, ValueError) as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 2
 
     ledger: SQLiteLedger | None = None
     try:
