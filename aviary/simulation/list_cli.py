@@ -50,7 +50,7 @@ def main(argv: list[str] | None = None) -> int:
             limit=args.limit,
             offset=args.offset,
         )
-    except (OSError, sqlite3.Error, ValueError, OverflowError) as exc:
+    except (OSError, sqlite3.Error, RuntimeError, ValueError, OverflowError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2
     finally:
