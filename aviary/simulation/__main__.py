@@ -13,17 +13,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         description="Run or verify deterministic simulation receipts.",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
+    subparsers.add_parser("run", help="run a JSON simulation spec and persist its receipt")
+    subparsers.add_parser("verify", help="load and verify a persisted simulation receipt")
 
-    run_parser = subparsers.add_parser("run", help="run a JSON simulation spec and persist its receipt")
-    run_parser.add_argument("args", nargs=argparse.REMAINDER)
-
-    verify_parser = subparsers.add_parser("verify", help="load and verify a persisted simulation receipt")
-    verify_parser.add_argument("args", nargs=argparse.REMAINDER)
-
-    parsed = parser.parse_args(list(argv) if argv is not None else None)
+    parsed, delegated_args = parser.parse_known_args(list(argv) if argv is not None else None)
     if parsed.command == "run":
-        return run_cli.main(parsed.args)
-    return verify_cli.main(parsed.args)
+        return run_cli.main(delegated_args)
+    return verify_cli.main(delegated_args)
 
 
 if __name__ == "__main__":
