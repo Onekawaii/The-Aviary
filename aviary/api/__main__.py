@@ -3,13 +3,14 @@ from __future__ import annotations
 import argparse
 
 from aviary.api.server import create_server
+from aviary.cli import default_db_path
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Serve the local Aviary JSON bridge.")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8787)
-    parser.add_argument("--db", default="ledger/aviary.db")
+    parser.add_argument("--db", default=default_db_path())
     return parser
 
 
