@@ -17,6 +17,39 @@ from aviary.simulation.persistence import SimulationReceiptStore
 
 SQLITE_MAX_INTEGER = (1 << 63) - 1
 
+CAPABILITIES = (
+    {
+        "method": "GET",
+        "path": "/api/health",
+        "purpose": "bridge readiness and discovered bird count",
+    },
+    {
+        "method": "GET",
+        "path": "/api/capabilities",
+        "purpose": "machine-readable bridge feature discovery",
+    },
+    {
+        "method": "GET",
+        "path": "/api/birds",
+        "purpose": "discovered bird contracts",
+    },
+    {
+        "method": "GET",
+        "path": "/api/simulations",
+        "purpose": "paginated simulation receipt summaries",
+    },
+    {
+        "method": "GET",
+        "path": "/api/simulations/{run_id}",
+        "purpose": "verified receipt detail with reconstructed state",
+    },
+    {
+        "method": "GET",
+        "path": "/api/simulations/{run_id}/verify",
+        "purpose": "lightweight receipt integrity evidence",
+    },
+)
+
 
 def _plain_json(value: Any) -> Any:
     if isinstance(value, Mapping):
@@ -64,6 +97,15 @@ class AviaryBridge:
             "status": "ok",
             "api_version": "v1",
             "bird_count": len(self.registry.ids()),
+        }
+
+    def capabilities(self) -> dict[str, Any]:
+        return {
+            "service": "the-aviary",
+            "api_version": "v1",
+            "read_only": True,
+            "capabilities": [dict(capability) for capability in CAPABILITIES],
+            "count": len(CAPABILITIES),
         }
 
     def birds(self) -> dict[str, Any]:
@@ -152,13 +194,25 @@ def _single_int_query(query: dict[str, list[str]], name: str, default: int) -> i
 
 def _handler_type(bridge: AviaryBridge) -> type[BaseHTTPRequestHandler]:
     class Handler(BaseHTTPRequestHandler):
-        server_version = "AviaryBridge/0.4"
+        server_version = "AviaryBridge/0.5"
 
         def do_GET(self) -> None:  # noqa: N802
             target = urlsplit(self.path)
             path = target.path
             if path == "/api/health":
                 self._send_json(HTTPStatus.OK, bridge.health())
+                return
+            if path == "/api/capabilities":
+                if target.query:
+                    self._send_json(
+                        HTTPStatus.BAD_REQUEST,
+                        {
+                            "error": "invalid_request",
+                            "detail": "capabilities does not accept query parameters",
+                        },
+                    )
+                    return
+                self._send_json(HTTPStatus.OK, bridge.capabilities())
                 return
             if path == "/api/birds":
                 self._send_json(HTTPStatus.OK, bridge.birds())
