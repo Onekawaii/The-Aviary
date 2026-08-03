@@ -55,7 +55,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         try:
             stored = SimulationReceiptStore(ledger).load(args.run_id)
-        except (LookupError, ValueError) as exc:
+        except (LookupError, ValueError, OverflowError) as exc:
             print(f"ERROR: {exc}", file=sys.stderr)
             return 2
         if args.json:
