@@ -10,6 +10,7 @@ Persist deterministic simulation results in the existing SQLite ledger without c
 - `aviary/simulation/persistence.py`
 - `aviary/simulation/cli.py`
 - `aviary/simulation/run_cli.py`
+- `aviary/simulation/__main__.py`
 - `aviary/simulation/__init__.py`
 
 ## Storage contract
@@ -22,6 +23,17 @@ Migration 3 adds:
 
 `SimulationReceiptStore.record()` is idempotent for an already verified receipt. `load()` rebuilds every snapshot and the final replay result, recomputes their hashes, and returns explicit integrity status.
 
+## Unified CLI
+
+The preferred terminal entry point is:
+
+```bash
+python -m aviary.simulation run simulation.json --db ledger/aviary.db --json
+python -m aviary.simulation verify 1 --db ledger/aviary.db --json
+```
+
+The older module-specific entry points remain compatible.
+
 ## Authoring CLI
 
 Create `simulation.json`:
@@ -29,20 +41,10 @@ Create `simulation.json`:
 ```json
 {
   "blueprints": [
-    {
-      "entity_id": "raven-1",
-      "kind": "bird",
-      "state": {"energy": 2}
-    }
+    {"entity_id": "raven-1", "kind": "bird", "state": {"energy": 2}}
   ],
   "events": [
-    {
-      "event_id": "gain",
-      "tick": 0,
-      "kind": "increment_property",
-      "target_id": "raven-1",
-      "payload": {"key": "energy", "amount": 3}
-    }
+    {"event_id": "gain", "tick": 0, "kind": "increment_property", "target_id": "raven-1", "payload": {"key": "energy", "amount": 3}}
   ]
 }
 ```
@@ -50,13 +52,7 @@ Create `simulation.json`:
 Run, persist, reload, and verify it:
 
 ```bash
-python -m aviary.simulation.run_cli simulation.json --db ledger/aviary.db
-```
-
-Machine-readable output:
-
-```bash
-python -m aviary.simulation.run_cli simulation.json --db ledger/aviary.db --json
+python -m aviary.simulation run simulation.json --db ledger/aviary.db
 ```
 
 ## Inspection CLI
@@ -64,20 +60,14 @@ python -m aviary.simulation.run_cli simulation.json --db ledger/aviary.db --json
 Inspect and verify a stored simulation receipt:
 
 ```bash
-python -m aviary.simulation.cli 1 --db ledger/aviary.db
+python -m aviary.simulation verify 1 --db ledger/aviary.db
 ```
 
-Machine-readable output:
-
-```bash
-python -m aviary.simulation.cli 1 --db ledger/aviary.db --json
-```
-
-Exit codes for both CLIs:
+Exit codes:
 
 - `0`: the simulation was persisted and verified, or the stored receipt verifies.
 - `1`: the run loaded but integrity failed.
-- `2`: input, persistence, or stored structure was invalid.
+- `2`: command input, persistence, or stored structure was invalid.
 
 ## Verification
 
@@ -88,30 +78,20 @@ python verify.py
 Focused tests:
 
 ```bash
-python -m unittest tests.test_simulation_persistence tests.test_simulation_cli tests.test_simulation_run_cli -v
+python -m unittest tests.test_simulation_main_cli tests.test_simulation_persistence tests.test_simulation_cli tests.test_simulation_run_cli -v
 ```
 
 ## Demonstration
 
-A JSON specification is validated, replayed deterministically, persisted, reloaded, and verified before success is reported. The resulting numeric run ID can then be inspected independently with `aviary.simulation.cli`.
-
-The receipts demonstrate:
-
-- the rebuilt result equals the original result;
-- every snapshot hash is valid;
-- the rebuilt replay receipt equals the stored receipt;
-- recording the same verified receipt again returns the original run ID;
-- both CLIs report integrity in human-readable or JSON form.
+A JSON specification is validated, replayed deterministically, persisted, reloaded, and verified before success is reported. The resulting numeric run ID can then be inspected independently through the same unified CLI.
 
 ## Failure cases
 
+- Omitting the `run` or `verify` command returns argparse exit code `2`.
 - Invalid JSON and missing required specification fields return exit code `2` without a traceback.
 - Events targeting absent entities are rejected before replay.
-- Missing run IDs raise `LookupError` in the API and return CLI exit code `2`.
-- Snapshot-count drift raises `ValueError`.
-- Changed snapshot state returns `valid == False` and CLI exit code `1`.
-- Duplicate verified receipts do not create duplicate rows.
-- Duplicate receipts whose stored data no longer verifies are rejected.
+- Missing run IDs return CLI exit code `2`.
+- Changed snapshot state returns exit code `1`.
 
 ## Known limitations
 
