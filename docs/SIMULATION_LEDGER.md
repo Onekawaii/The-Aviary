@@ -10,6 +10,7 @@ Persist deterministic simulation results in the existing SQLite ledger without c
 - `aviary/simulation/persistence.py`
 - `aviary/simulation/cli.py`
 - `aviary/simulation/list_cli.py`
+- `aviary/simulation/export_cli.py`
 - `aviary/simulation/run_cli.py`
 - `aviary/simulation/__main__.py`
 - `aviary/simulation/__init__.py`
@@ -31,6 +32,7 @@ The preferred terminal entry point is:
 ```bash
 python -m aviary.simulation run simulation.json --db ledger/aviary.db --json
 python -m aviary.simulation list --db ledger/aviary.db --limit 20 --json
+python -m aviary.simulation export 1 --db ledger/aviary.db
 python -m aviary.simulation verify 1 --db ledger/aviary.db --json
 ```
 
@@ -67,6 +69,16 @@ python -m aviary.simulation list --db ledger/aviary.db --limit 20 --offset 0
 
 The listing reports run ID, creation timestamp, snapshot count, and receipt SHA-256. It deliberately does not claim integrity verification; use `verify` for that.
 
+## Export CLI
+
+Export a selected run as machine-readable JSON containing the final state, every per-tick snapshot, stored integrity evidence, and recomputed receipt SHA-256:
+
+```bash
+python -m aviary.simulation export 1 --db ledger/aviary.db
+```
+
+Export returns `0` when all integrity checks pass, `1` when the run loads but integrity fails, and `2` for missing or structurally invalid runs. A tampered run is still exported so its failed integrity evidence can be inspected.
+
 ## Inspection CLI
 
 Inspect and verify a stored simulation receipt:
@@ -90,25 +102,26 @@ python verify.py
 Focused tests:
 
 ```bash
-python -m unittest tests.test_simulation_main_cli tests.test_simulation_list_cli tests.test_simulation_persistence tests.test_simulation_cli tests.test_simulation_run_cli -v
+python -m unittest tests.test_simulation_main_cli tests.test_simulation_list_cli tests.test_simulation_export_cli tests.test_simulation_persistence tests.test_simulation_cli tests.test_simulation_run_cli -v
 ```
 
 ## Demonstration
 
-A JSON specification is validated, replayed deterministically, persisted, reloaded, and verified before success is reported. Persisted receipt metadata can be paged newest-first and a selected numeric run ID can then be verified independently through the same unified CLI.
+A JSON specification is validated, replayed deterministically, persisted, reloaded, and verified before success is reported. Persisted receipt metadata can be paged newest-first, a selected run can be exported with its complete integrity evidence, and the same run ID can be verified independently through the unified CLI.
 
 ## Failure cases
 
-- Omitting the `run`, `list`, or `verify` command returns argparse exit code `2`.
+- Omitting the `run`, `list`, `export`, or `verify` command returns argparse exit code `2`.
 - Invalid JSON and missing required specification fields return exit code `2` without a traceback.
 - Events targeting absent entities are rejected before replay.
 - Listing with `--limit 0` or a negative offset returns exit code `2` without a traceback.
 - Missing run IDs return CLI exit code `2`.
-- Changed snapshot state returns exit code `1`.
+- Changed snapshot state is exported with `valid: false` and returns exit code `1`.
 
 ## Known limitations
 
 - Listing reads receipt metadata only and does not verify snapshot integrity.
+- Export writes JSON to stdout only; atomic file output is not included.
 - JSON specifications can use only effects registered by the built-in deterministic simulation engine.
 - Stored runs are not yet attached to council sessions or Arkheopantheochive scenes.
 - The database stores snapshots as canonical JSON rather than compressed blobs.
