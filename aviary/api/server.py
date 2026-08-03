@@ -26,6 +26,17 @@ def _plain_json(value: Any) -> Any:
     return value
 
 
+def _parse_run_id(raw_id: str) -> int:
+    if not raw_id.isascii() or not raw_id.isdigit():
+        raise ValueError("simulation run id must be a positive integer")
+    run_id = int(raw_id)
+    if not 1 <= run_id <= SQLITE_MAX_INTEGER:
+        raise ValueError(
+            f"simulation run id must be from 1 through {SQLITE_MAX_INTEGER}"
+        )
+    return run_id
+
+
 class AviaryBridge:
     """Read-only application boundary for local Aviary clients."""
 
@@ -48,20 +59,38 @@ class AviaryBridge:
             ledger.close()
 
     def health(self) -> dict[str, Any]:
-        return {"service": "the-aviary", "status": "ok", "api_version": "v1", "bird_count": len(self.registry.ids())}
+        return {
+            "service": "the-aviary",
+            "status": "ok",
+            "api_version": "v1",
+            "bird_count": len(self.registry.ids()),
+        }
 
     def birds(self) -> dict[str, Any]:
         birds = []
         for loaded in self.registry.all():
             metadata = loaded.instance.metadata()
-            birds.append({"bird_id": loaded.bird_id, "module": loaded.module, "metadata": asdict(metadata), "voice": loaded.instance.voice(), "schema": loaded.instance.schema()})
+            birds.append(
+                {
+                    "bird_id": loaded.bird_id,
+                    "module": loaded.module,
+                    "metadata": asdict(metadata),
+                    "voice": loaded.instance.voice(),
+                    "schema": loaded.instance.schema(),
+                }
+            )
         return {"birds": birds, "count": len(birds)}
 
     def simulations(self, *, limit: int = 20, offset: int = 0) -> dict[str, Any]:
         ledger = SQLiteLedger(self.ledger_path)
         try:
             runs = SimulationReceiptStore(ledger).list_runs(limit=limit, offset=offset)
-            return {"runs": [asdict(run) for run in runs], "count": len(runs), "limit": limit, "offset": offset}
+            return {
+                "runs": [asdict(run) for run in runs],
+                "count": len(runs),
+                "limit": limit,
+                "offset": offset,
+            }
         finally:
             ledger.close()
 
@@ -77,9 +106,29 @@ class AviaryBridge:
                 "valid": stored.valid,
                 "final_state": _plain_json(stored.result.final_state),
                 "snapshots": [
-                    {"tick": snapshot.tick, "state": _plain_json(snapshot.state), "state_sha256": snapshot.state_hash, "valid": stored.snapshot_integrity[index]}
+                    {
+                        "tick": snapshot.tick,
+                        "state": _plain_json(snapshot.state),
+                        "state_sha256": snapshot.state_hash,
+                        "valid": stored.snapshot_integrity[index],
+                    }
                     for index, snapshot in enumerate(stored.result.snapshots)
                 ],
+            }
+        finally:
+            ledger.close()
+
+    def simulation_verification(self, run_id: int) -> dict[str, Any]:
+        ledger = SQLiteLedger(self.ledger_path)
+        try:
+            stored = SimulationReceiptStore(ledger).load(run_id)
+            return {
+                "run_id": stored.run_id,
+                "receipt_sha256": stored.result.receipt_hash,
+                "receipt_valid": stored.receipt_valid,
+                "snapshot_count": len(stored.result.snapshots),
+                "snapshot_integrity": list(stored.snapshot_integrity),
+                "valid": stored.valid,
             }
         finally:
             ledger.close()
@@ -103,62 +152,129 @@ def _single_int_query(query: dict[str, list[str]], name: str, default: int) -> i
 
 def _handler_type(bridge: AviaryBridge) -> type[BaseHTTPRequestHandler]:
     class Handler(BaseHTTPRequestHandler):
-        server_version = "AviaryBridge/0.3"
+        server_version = "AviaryBridge/0.4"
 
         def do_GET(self) -> None:  # noqa: N802
             target = urlsplit(self.path)
             path = target.path
             if path == "/api/health":
-                self._send_json(HTTPStatus.OK, bridge.health()); return
+                self._send_json(HTTPStatus.OK, bridge.health())
+                return
             if path == "/api/birds":
-                self._send_json(HTTPStatus.OK, bridge.birds()); return
+                self._send_json(HTTPStatus.OK, bridge.birds())
+                return
             if path == "/api/simulations":
-                try:
-                    query = parse_qs(target.query, keep_blank_values=True)
-                    limit = _single_int_query(query, "limit", 20)
-                    offset = _single_int_query(query, "offset", 0)
-                    if set(query) - {"limit", "offset"}: raise ValueError("unsupported query parameter")
-                    payload = bridge.simulations(limit=limit, offset=offset)
-                except ValueError as exc:
-                    self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_request", "detail": str(exc)}); return
-                except (OSError, RuntimeError, sqlite3.Error) as exc:
-                    self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "ledger_unavailable", "detail": str(exc)}); return
-                self._send_json(HTTPStatus.OK, payload); return
+                self._handle_simulation_list(target.query)
+                return
             if path.startswith("/api/simulations/"):
-                raw_id = path.removeprefix("/api/simulations/")
-                if target.query or not raw_id.isascii() or not raw_id.isdigit() or int(raw_id) < 1:
-                    self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_request", "detail": "simulation run id must be a positive integer"}); return
-                try:
-                    payload = bridge.simulation(int(raw_id))
-                except LookupError as exc:
-                    self._send_json(HTTPStatus.NOT_FOUND, {"error": "simulation_not_found", "detail": str(exc)}); return
-                except ValueError as exc:
-                    self._send_json(HTTPStatus.CONFLICT, {"error": "simulation_invalid", "detail": str(exc)}); return
-                except (OSError, RuntimeError, sqlite3.Error) as exc:
-                    self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "ledger_unavailable", "detail": str(exc)}); return
-                self._send_json(HTTPStatus.OK, payload); return
+                self._handle_simulation_path(path, target.query)
+                return
             self._send_json(HTTPStatus.NOT_FOUND, {"error": "not_found", "path": path})
 
+        def _handle_simulation_list(self, raw_query: str) -> None:
+            try:
+                query = parse_qs(raw_query, keep_blank_values=True)
+                limit = _single_int_query(query, "limit", 20)
+                offset = _single_int_query(query, "offset", 0)
+                if set(query) - {"limit", "offset"}:
+                    raise ValueError("unsupported query parameter")
+                payload = bridge.simulations(limit=limit, offset=offset)
+            except ValueError as exc:
+                self._send_json(
+                    HTTPStatus.BAD_REQUEST,
+                    {"error": "invalid_request", "detail": str(exc)},
+                )
+                return
+            except (OSError, RuntimeError, sqlite3.Error) as exc:
+                self._send_json(
+                    HTTPStatus.INTERNAL_SERVER_ERROR,
+                    {"error": "ledger_unavailable", "detail": str(exc)},
+                )
+                return
+            self._send_json(HTTPStatus.OK, payload)
+
+        def _handle_simulation_path(self, path: str, raw_query: str) -> None:
+            suffix = path.removeprefix("/api/simulations/")
+            verification = suffix.endswith("/verify")
+            raw_id = suffix.removesuffix("/verify") if verification else suffix
+            if raw_query or "/" in raw_id:
+                self._send_invalid_run_id()
+                return
+            try:
+                run_id = _parse_run_id(raw_id)
+                payload = (
+                    bridge.simulation_verification(run_id)
+                    if verification
+                    else bridge.simulation(run_id)
+                )
+            except ValueError as exc:
+                if str(exc).startswith("simulation run id"):
+                    self._send_json(
+                        HTTPStatus.BAD_REQUEST,
+                        {"error": "invalid_request", "detail": str(exc)},
+                    )
+                else:
+                    self._send_json(
+                        HTTPStatus.CONFLICT,
+                        {"error": "simulation_invalid", "detail": str(exc)},
+                    )
+                return
+            except LookupError as exc:
+                self._send_json(
+                    HTTPStatus.NOT_FOUND,
+                    {"error": "simulation_not_found", "detail": str(exc)},
+                )
+                return
+            except (OSError, RuntimeError, sqlite3.Error) as exc:
+                self._send_json(
+                    HTTPStatus.INTERNAL_SERVER_ERROR,
+                    {"error": "ledger_unavailable", "detail": str(exc)},
+                )
+                return
+            self._send_json(HTTPStatus.OK, payload)
+
+        def _send_invalid_run_id(self) -> None:
+            self._send_json(
+                HTTPStatus.BAD_REQUEST,
+                {
+                    "error": "invalid_request",
+                    "detail": "simulation run id must be a positive integer",
+                },
+            )
+
         def do_POST(self) -> None:  # noqa: N802
-            self._send_json(HTTPStatus.METHOD_NOT_ALLOWED, {"error": "method_not_allowed", "method": "POST"})
+            self._send_json(
+                HTTPStatus.METHOD_NOT_ALLOWED,
+                {"error": "method_not_allowed", "method": "POST"},
+            )
 
         def log_message(self, format: str, *args: object) -> None:
             return
 
         def _send_json(self, status: HTTPStatus, payload: dict[str, Any]) -> None:
-            body = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+            body = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode(
+                "utf-8"
+            )
             self.send_response(int(status))
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-store")
             self.send_header("X-Content-Type-Options", "nosniff")
-            self.end_headers(); self.wfile.write(body)
+            self.end_headers()
+            self.wfile.write(body)
 
     return Handler
 
 
-def create_server(host: str = "127.0.0.1", port: int = 8787, bridge: AviaryBridge | None = None, ledger_path: str | Path = "ledger/aviary.db") -> ThreadingHTTPServer:
-    if not isinstance(host, str) or not host.strip(): raise ValueError("host cannot be empty")
-    if not isinstance(port, int) or isinstance(port, bool) or not 0 <= port <= 65535: raise ValueError("port must be an integer from 0 through 65535")
+def create_server(
+    host: str = "127.0.0.1",
+    port: int = 8787,
+    bridge: AviaryBridge | None = None,
+    ledger_path: str | Path = "ledger/aviary.db",
+) -> ThreadingHTTPServer:
+    if not isinstance(host, str) or not host.strip():
+        raise ValueError("host cannot be empty")
+    if not isinstance(port, int) or isinstance(port, bool) or not 0 <= port <= 65535:
+        raise ValueError("port must be an integer from 0 through 65535")
     service = bridge or AviaryBridge(ledger_path=ledger_path)
     return ThreadingHTTPServer((host, port), _handler_type(service))
