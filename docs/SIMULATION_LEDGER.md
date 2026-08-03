@@ -77,7 +77,17 @@ Export a selected run as machine-readable JSON containing the final state, every
 python -m aviary.simulation export 1 --db ledger/aviary.db
 ```
 
-Export returns `0` when all integrity checks pass, `1` when the run loads but integrity fails, and `2` for missing or structurally invalid runs. A tampered run is still exported so its failed integrity evidence can be inspected.
+Write the same export to a file using an atomic same-directory replacement:
+
+```bash
+python -m aviary.simulation export 1 \
+  --db ledger/aviary.db \
+  --output receipts/run-1.json
+```
+
+The destination directory must already exist. The command writes and flushes a temporary file beside the destination, then replaces the destination only after the complete JSON is durable. A failed write returns exit code `2`, removes the temporary file, and does not emit partial JSON to stdout.
+
+Export returns `0` when all integrity checks pass, `1` when the run loads but integrity fails, and `2` for missing, structurally invalid, or unwritable exports. A tampered run is still exported so its failed integrity evidence can be inspected.
 
 ## Inspection CLI
 
@@ -91,7 +101,7 @@ Exit codes:
 
 - `0`: the requested operation completed, or the stored receipt verifies.
 - `1`: the run loaded but integrity failed.
-- `2`: command input, persistence, or stored structure was invalid.
+- `2`: command input, persistence, stored structure, or export output was invalid.
 
 ## Verification
 
@@ -107,7 +117,7 @@ python -m unittest tests.test_simulation_main_cli tests.test_simulation_list_cli
 
 ## Demonstration
 
-A JSON specification is validated, replayed deterministically, persisted, reloaded, and verified before success is reported. Persisted receipt metadata can be paged newest-first, a selected run can be exported with its complete integrity evidence, and the same run ID can be verified independently through the unified CLI.
+A JSON specification is validated, replayed deterministically, persisted, reloaded, and verified before success is reported. Persisted receipt metadata can be paged newest-first, a selected run can be exported with its complete integrity evidence to stdout or an atomically replaced file, and the same run ID can be verified independently through the unified CLI.
 
 ## Failure cases
 
@@ -117,11 +127,12 @@ A JSON specification is validated, replayed deterministically, persisted, reload
 - Listing with `--limit 0` or a negative offset returns exit code `2` without a traceback.
 - Missing run IDs return CLI exit code `2`.
 - Changed snapshot state is exported with `valid: false` and returns exit code `1`.
+- An unwritable or invalid `--output` destination returns exit code `2`, leaves no temporary file, and does not replace the existing destination.
 
 ## Known limitations
 
 - Listing reads receipt metadata only and does not verify snapshot integrity.
-- Export writes JSON to stdout only; atomic file output is not included.
+- Export does not create missing destination directories.
 - JSON specifications can use only effects registered by the built-in deterministic simulation engine.
 - Stored runs are not yet attached to council sessions or Arkheopantheochive scenes.
 - The database stores snapshots as canonical JSON rather than compressed blobs.
