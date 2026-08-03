@@ -25,6 +25,12 @@ class UnifiedSimulationCLITests(unittest.TestCase):
         self.assertEqual(result, 5)
         delegated.assert_called_once_with(["--limit", "5", "--json"])
 
+    def test_list_delegates_help(self):
+        with patch("aviary.simulation.__main__.list_cli.main", return_value=0) as delegated:
+            result = main(["list", "--help"])
+        self.assertEqual(result, 0)
+        delegated.assert_called_once_with(["--help"])
+
     def test_verify_delegates_remaining_arguments(self):
         with patch("aviary.simulation.__main__.verify_cli.main", return_value=3) as delegated:
             result = main(["verify", "42", "--json"])
