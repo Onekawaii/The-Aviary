@@ -82,5 +82,50 @@ class ChronicleArchiveTests(unittest.TestCase):
             fossil.state["nest"]["signal"] = 99
 
 
+    def test_chronicle_freezes_source_event_payloads(self) -> None:
+        payload = {"nested": {"values": [1, 2]}}
+        event = SimulationEvent(
+            "event-a",
+            0,
+            "set_property",
+            "nest",
+            payload,
+        )
+        chronicle = Chronicle.create((event,))
+
+        payload["nested"]["values"].append(3)
+
+        frozen_payload = chronicle.entries[0].payload
+        self.assertEqual(tuple(frozen_payload["nested"]["values"]), (1, 2))
+        with self.assertRaises(TypeError):
+            frozen_payload["new"] = True
+
+    def test_archive_snapshots_source_blueprint_state(self) -> None:
+        state = {"signal": 0, "nested": {"values": [1, 2]}}
+        blueprint = EntityBlueprint("nest", "place", state)
+        archive = Archive.create((blueprint,), Chronicle.create(()))
+        first = archive.replay()
+
+        state["signal"] = 99
+        state["nested"]["values"].append(3)
+        second = archive.replay()
+
+        self.assertEqual(first.receipt_hash, second.receipt_hash)
+        self.assertEqual(archive.blueprints[0].state["signal"], 0)
+        self.assertEqual(
+            tuple(archive.blueprints[0].state["nested"]["values"]),
+            (1, 2),
+        )
+        with self.assertRaises(TypeError):
+            archive.blueprints[0].state["new"] = True
+
+    def test_archive_fossil_validates_and_normalizes_name(self) -> None:
+        archive = Archive.create(_blueprints(), Chronicle.create(_events()))
+        fossil = archive.fossil(2, "  awakening  ")
+
+        self.assertEqual(fossil.name, "awakening")
+        with self.assertRaisesRegex(ValueError, "fossil name cannot be empty"):
+            archive.fossil(2, "   ")
+
 if __name__ == "__main__":
     unittest.main()
