@@ -13,6 +13,7 @@ from aviary.simulation.dialogue import (
     DialogueResult,
     GovernorVerdict,
 )
+from aviary.simulation.dialogue_persistence import DialogueReceiptStore, StoredDialogue
 from aviary.simulation.fossil import Fossil
 from aviary.simulation.kernel import DeterministicSimulation
 from aviary.simulation.persistence import SimulationReceiptStore, StoredSimulation
@@ -22,6 +23,7 @@ __all__ = [
     "Chronicle",
     "DeterministicDialogue",
     "DeterministicSimulation",
+    "DialogueReceiptStore",
     "DialogueRecord",
     "DialogueResult",
     "EntityBlueprint",
@@ -32,5 +34,6 @@ __all__ = [
     "SimulationReceiptStore",
     "SimulationSnapshot",
     "SimulationValidationError",
+    "StoredDialogue",
     "StoredSimulation",
 ]
