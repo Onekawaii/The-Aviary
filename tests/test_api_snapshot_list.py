@@ -42,6 +42,13 @@ class SnapshotListRouteTests(unittest.TestCase):
                     "owl-1",
                     {"key": "energy", "amount": 2},
                 ),
+                SimulationEvent(
+                    "rise-again",
+                    2,
+                    "increment_property",
+                    "owl-1",
+                    {"key": "energy", "amount": 1},
+                ),
             ),
         )
         ledger = SQLiteLedger(self.db_path)
@@ -63,14 +70,36 @@ class SnapshotListRouteTests(unittest.TestCase):
         status, body = self._get_json(f"/api/simulations/{self.run_id}/snapshots")
         self.assertEqual(status, 200)
         self.assertEqual(body["run_id"], self.run_id)
-        self.assertEqual(body["count"], 2)
+        self.assertEqual(body["count"], 3)
+        self.assertEqual(body["total_count"], 3)
+        self.assertEqual(body["limit"], 20)
+        self.assertEqual(body["offset"], 0)
         self.assertTrue(body["receipt_valid"])
-        self.assertEqual([item["tick"] for item in body["snapshots"]], [0, 1])
+        self.assertEqual([item["tick"] for item in body["snapshots"]], [0, 1, 2])
         for item in body["snapshots"]:
             self.assertEqual(len(item["state_sha256"]), 64)
             self.assertTrue(item["valid"])
             self.assertNotIn("state", item)
         self.assertNotIn("final_state", body)
+
+    def test_paginates_snapshot_metadata(self) -> None:
+        status, body = self._get_json(
+            f"/api/simulations/{self.run_id}/snapshots?limit=1&offset=1"
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(body["count"], 1)
+        self.assertEqual(body["total_count"], 3)
+        self.assertEqual(body["limit"], 1)
+        self.assertEqual(body["offset"], 1)
+        self.assertEqual([item["tick"] for item in body["snapshots"]], [1])
+
+        status, body = self._get_json(
+            f"/api/simulations/{self.run_id}/snapshots?limit=2&offset=99"
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(body["count"], 0)
+        self.assertEqual(body["total_count"], 3)
+        self.assertEqual(body["snapshots"], [])
 
     def test_reports_tampered_snapshot_integrity(self) -> None:
         ledger = SQLiteLedger(self.db_path)
@@ -88,12 +117,20 @@ class SnapshotListRouteTests(unittest.TestCase):
         self.assertFalse(body["snapshots"][0]["valid"])
         self.assertTrue(body["snapshots"][1]["valid"])
 
-    def test_rejects_query_parameters_and_missing_runs(self) -> None:
-        status, body = self._read_error(
-            f"/api/simulations/{self.run_id}/snapshots?extra=1"
+    def test_rejects_invalid_pagination_and_missing_runs(self) -> None:
+        paths = (
+            f"/api/simulations/{self.run_id}/snapshots?extra=1",
+            f"/api/simulations/{self.run_id}/snapshots?limit=0",
+            f"/api/simulations/{self.run_id}/snapshots?limit=nope",
+            f"/api/simulations/{self.run_id}/snapshots?limit=1&limit=2",
+            f"/api/simulations/{self.run_id}/snapshots?offset=-1",
+            f"/api/simulations/{self.run_id}/snapshots?offset=9223372036854775808",
         )
-        self.assertEqual(status, 400)
-        self.assertEqual(body["error"], "invalid_request")
+        for path in paths:
+            with self.subTest(path=path):
+                status, body = self._read_error(path)
+                self.assertEqual(status, 400)
+                self.assertEqual(body["error"], "invalid_request")
 
         status, body = self._read_error("/api/simulations/999/snapshots")
         self.assertEqual(status, 404)
@@ -102,8 +139,13 @@ class SnapshotListRouteTests(unittest.TestCase):
     def test_capabilities_advertise_snapshot_listing(self) -> None:
         status, body = self._get_json("/api/capabilities")
         self.assertEqual(status, 200)
-        paths = {item["path"] for item in body["capabilities"]}
-        self.assertIn("/api/simulations/{run_id}/snapshots", paths)
+        capabilities = {
+            item["path"]: item["purpose"] for item in body["capabilities"]
+        }
+        self.assertIn("/api/simulations/{run_id}/snapshots", capabilities)
+        self.assertIn(
+            "paginated", capabilities["/api/simulations/{run_id}/snapshots"]
+        )
 
 
 if __name__ == "__main__":

@@ -51,7 +51,7 @@ CAPABILITIES = (
     {
         "method": "GET",
         "path": "/api/simulations/{run_id}/snapshots",
-        "purpose": "snapshot metadata with integrity evidence",
+        "purpose": "paginated snapshot metadata with integrity evidence",
     },
     {
         "method": "GET",
@@ -198,11 +198,13 @@ class AviaryBridge:
         finally:
             ledger.close()
 
-    def simulation_snapshots(self, run_id: int) -> dict[str, Any]:
+    def simulation_snapshots(
+        self, run_id: int, *, limit: int = 20, offset: int = 0
+    ) -> dict[str, Any]:
         ledger = SQLiteLedger(self.ledger_path)
         try:
             stored = SimulationReceiptStore(ledger).load(run_id)
-            snapshots = [
+            all_snapshots = [
                 {
                     "tick": snapshot.tick,
                     "state_sha256": snapshot.state_hash,
@@ -210,12 +212,16 @@ class AviaryBridge:
                 }
                 for index, snapshot in enumerate(stored.result.snapshots)
             ]
+            snapshots = all_snapshots[offset : offset + limit]
             return {
                 "run_id": stored.run_id,
                 "receipt_sha256": stored.result.receipt_hash,
                 "receipt_valid": stored.receipt_valid,
                 "snapshots": snapshots,
                 "count": len(snapshots),
+                "total_count": len(all_snapshots),
+                "limit": limit,
+                "offset": offset,
             }
         finally:
             ledger.close()
@@ -260,7 +266,7 @@ def _single_int_query(query: dict[str, list[str]], name: str, default: int) -> i
 
 def _handler_type(bridge: AviaryBridge) -> type[BaseHTTPRequestHandler]:
     class Handler(BaseHTTPRequestHandler):
-        server_version = "AviaryBridge/0.7"
+        server_version = "AviaryBridge/0.8"
 
         def do_GET(self) -> None:  # noqa: N802
             target = urlsplit(self.path)
@@ -314,11 +320,12 @@ def _handler_type(bridge: AviaryBridge) -> type[BaseHTTPRequestHandler]:
             self._send_json(HTTPStatus.OK, payload)
 
         def _handle_simulation_path(self, path: str, raw_query: str) -> None:
-            if raw_query:
-                self._send_invalid_simulation_path()
-                return
             suffix = path.removeprefix("/api/simulations/")
             segments = suffix.split("/")
+            snapshot_list = len(segments) == 2 and segments[1] == "snapshots"
+            if raw_query and not snapshot_list:
+                self._send_invalid_simulation_path()
+                return
             try:
                 if len(segments) == 1:
                     run_id = _parse_run_id(segments[0])
@@ -326,9 +333,16 @@ def _handler_type(bridge: AviaryBridge) -> type[BaseHTTPRequestHandler]:
                 elif len(segments) == 2 and segments[1] == "verify":
                     run_id = _parse_run_id(segments[0])
                     payload = bridge.simulation_verification(run_id)
-                elif len(segments) == 2 and segments[1] == "snapshots":
+                elif snapshot_list:
                     run_id = _parse_run_id(segments[0])
-                    payload = bridge.simulation_snapshots(run_id)
+                    query = parse_qs(raw_query, keep_blank_values=True)
+                    limit = _single_int_query(query, "limit", 20)
+                    offset = _single_int_query(query, "offset", 0)
+                    if set(query) - {"limit", "offset"}:
+                        raise ValueError("unsupported query parameter")
+                    payload = bridge.simulation_snapshots(
+                        run_id, limit=limit, offset=offset
+                    )
                 elif len(segments) == 3 and segments[1] == "snapshots":
                     run_id = _parse_run_id(segments[0])
                     tick = _parse_tick(segments[2])
@@ -337,7 +351,13 @@ def _handler_type(bridge: AviaryBridge) -> type[BaseHTTPRequestHandler]:
                     self._send_invalid_simulation_path()
                     return
             except ValueError as exc:
-                if str(exc).startswith(("simulation run id", "simulation tick")):
+                if str(exc).startswith((
+                    "simulation run id",
+                    "simulation tick",
+                    "limit",
+                    "offset",
+                    "unsupported query parameter",
+                )):
                     self._send_json(
                         HTTPStatus.BAD_REQUEST,
                         {"error": "invalid_request", "detail": str(exc)},
