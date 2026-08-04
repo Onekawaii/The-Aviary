@@ -3,7 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterable
 
-from aviary.simulation.contracts import SimulationEvent, SimulationValidationError
+from aviary.simulation.contracts import (
+    SimulationEvent,
+    SimulationValidationError,
+    _validated_json_object,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -27,7 +31,15 @@ class Chronicle:
                     f"duplicate event_id: {event.event_id}"
                 )
             event_ids.add(event.event_id)
-            validated.append(event)
+            validated.append(
+                SimulationEvent(
+                    event_id=event.event_id,
+                    tick=event.tick,
+                    kind=event.kind,
+                    target_id=event.target_id,
+                    payload=_validated_json_object(event.payload, "event payload"),
+                )
+            )
         validated.sort(key=lambda event: (event.tick, event.event_id))
         return cls(entries=tuple(validated))
 
