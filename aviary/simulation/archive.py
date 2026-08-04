@@ -3,7 +3,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from aviary.simulation.chronicle import Chronicle
-from aviary.simulation.contracts import EntityBlueprint, ReplayResult, SimulationValidationError
+from aviary.simulation.contracts import (
+    EntityBlueprint,
+    ReplayResult,
+    SimulationValidationError,
+    _validated_json_object,
+)
 from aviary.simulation.fossil import Fossil
 from aviary.simulation.kernel import DeterministicSimulation
 
@@ -21,15 +26,23 @@ class Archive:
         blueprints: tuple[EntityBlueprint, ...],
         chronicle: Chronicle,
     ) -> "Archive":
+        frozen_blueprints: list[EntityBlueprint] = []
         for blueprint in blueprints:
             if not isinstance(blueprint, EntityBlueprint):
                 raise SimulationValidationError(
                     "archive blueprints must be EntityBlueprint instances"
                 )
             blueprint.validate()
+            frozen_blueprints.append(
+                EntityBlueprint(
+                    entity_id=blueprint.entity_id,
+                    kind=blueprint.kind,
+                    state=_validated_json_object(blueprint.state, "entity state"),
+                )
+            )
         if not isinstance(chronicle, Chronicle):
             raise SimulationValidationError("archive requires a Chronicle")
-        return cls(tuple(blueprints), chronicle)
+        return cls(tuple(frozen_blueprints), chronicle)
 
     def replay(
         self,
@@ -46,8 +59,8 @@ class Archive:
         return self.replay(until_tick=tick)
 
     def fossil(self, tick: int, name: str) -> Fossil:
-        result = self.rewind(tick)
-        return Fossil(name=name, snapshot=result.snapshots[-1])
+        snapshot = self.rewind(tick).snapshots[-1]
+        return Fossil.create(name=name, tick=snapshot.tick, state=snapshot.state)
 
     def fork(self, tick: int) -> "Archive":
         return Archive.create(self.blueprints, self.chronicle.through(tick))
