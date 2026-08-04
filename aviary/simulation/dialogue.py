@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import hashlib
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Callable, Literal
+from typing import Any, Callable, Literal
 
 from aviary.simulation.contracts import (
     SimulationEvent,
@@ -30,6 +31,9 @@ class GovernorVerdict:
 class DialogueRecord:
     event_id: str
     tick: int
+    kind: str
+    target_id: str
+    payload: Mapping[str, Any]
     decision: Decision
     reason: str
 
@@ -46,15 +50,57 @@ class DialogueResult:
         records: tuple[DialogueRecord, ...],
         accepted_events: tuple[SimulationEvent, ...],
     ) -> "DialogueResult":
+        normalized_records: list[DialogueRecord] = []
+        for record in records:
+            if not isinstance(record, DialogueRecord):
+                raise SimulationValidationError(
+                    "dialogue records must be DialogueRecord instances"
+                )
+            if record.decision not in ("accepted", "rejected"):
+                raise SimulationValidationError(
+                    "dialogue record decision must be accepted or rejected"
+                )
+            if not isinstance(record.reason, str) or not record.reason.strip():
+                raise SimulationValidationError(
+                    "dialogue record reason cannot be empty"
+                )
+            proposal = _normalized_event(
+                SimulationEvent(
+                    event_id=record.event_id,
+                    tick=record.tick,
+                    kind=record.kind,
+                    target_id=record.target_id,
+                    payload=record.payload,
+                ),
+                "dialogue record",
+            )
+            normalized_records.append(
+                DialogueRecord(
+                    event_id=proposal.event_id,
+                    tick=proposal.tick,
+                    kind=proposal.kind,
+                    target_id=proposal.target_id,
+                    payload=proposal.payload,
+                    decision=record.decision,
+                    reason=record.reason.strip(),
+                )
+            )
+
+        normalized_accepted_events = tuple(
+            _normalized_event(event, "accepted event") for event in accepted_events
+        )
         payload = {
             "records": [
                 {
                     "event_id": record.event_id,
                     "tick": record.tick,
+                    "kind": record.kind,
+                    "target_id": record.target_id,
+                    "payload": record.payload,
                     "decision": record.decision,
                     "reason": record.reason,
                 }
-                for record in records
+                for record in normalized_records
             ],
             "accepted_events": [
                 {
@@ -64,14 +110,33 @@ class DialogueResult:
                     "target_id": event.target_id,
                     "payload": event.payload,
                 }
-                for event in accepted_events
+                for event in normalized_accepted_events
             ],
         }
         digest = hashlib.sha256(_canonical_json(payload).encode("utf-8")).hexdigest()
-        return cls(records=records, accepted_events=accepted_events, receipt_hash=digest)
+        return cls(
+            records=tuple(normalized_records),
+            accepted_events=normalized_accepted_events,
+            receipt_hash=digest,
+        )
 
 
 Governor = Callable[[SimulationEvent], GovernorVerdict]
+
+
+def _normalized_event(event: SimulationEvent, field_name: str) -> SimulationEvent:
+    if not isinstance(event, SimulationEvent):
+        raise SimulationValidationError(
+            f"{field_name} must be a SimulationEvent"
+        )
+    event.validate()
+    return SimulationEvent(
+        event_id=event.event_id,
+        tick=event.tick,
+        kind=event.kind,
+        target_id=event.target_id,
+        payload=_validated_json_object(event.payload, "event payload"),
+    )
 
 
 class DeterministicDialogue:
@@ -94,23 +159,13 @@ class DeterministicDialogue:
         proposal_ids: set[str] = set()
         normalized: list[SimulationEvent] = []
         for proposal in proposals:
-            if not isinstance(proposal, SimulationEvent):
-                raise SimulationValidationError("proposal must be a SimulationEvent")
-            proposal.validate()
+            proposal = _normalized_event(proposal, "proposal")
             if proposal.event_id in proposal_ids:
                 raise SimulationValidationError(
                     f"duplicate proposal event_id: {proposal.event_id}"
                 )
             proposal_ids.add(proposal.event_id)
-            normalized.append(
-                SimulationEvent(
-                    event_id=proposal.event_id,
-                    tick=proposal.tick,
-                    kind=proposal.kind,
-                    target_id=proposal.target_id,
-                    payload=_validated_json_object(proposal.payload, "event payload"),
-                )
-            )
+            normalized.append(proposal)
 
         ordered = sorted(normalized, key=lambda event: (event.tick, event.event_id))
         records: list[DialogueRecord] = []
@@ -128,6 +183,9 @@ class DeterministicDialogue:
                 DialogueRecord(
                     event_id=proposal.event_id,
                     tick=proposal.tick,
+                    kind=proposal.kind,
+                    target_id=proposal.target_id,
+                    payload=proposal.payload,
                     decision=decision,
                     reason=verdict.reason.strip(),
                 )
