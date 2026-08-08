@@ -32,7 +32,7 @@ class SimulationPersistenceTests(unittest.TestCase):
         self.tempdir.cleanup()
 
     def test_schema_migrates_to_simulation_receipts(self):
-        self.assertEqual(self.ledger.get_schema_version(), 3)
+        self.assertEqual(self.ledger.get_schema_version(), 4)
 
     def test_record_and_load_preserve_verified_receipt(self):
         run_id = self.store.record(self.result)

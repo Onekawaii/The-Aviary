@@ -54,6 +54,14 @@ MIGRATIONS: tuple[Migration, ...] = (
             "CREATE INDEX IF NOT EXISTS idx_simulation_snapshots_run_tick ON simulation_snapshots(run_id,tick)",
         ),
     ),
+    Migration(
+        4,
+        "dialogue_receipts",
+        (
+            "CREATE TABLE IF NOT EXISTS dialogue_runs(id INTEGER PRIMARY KEY,receipt_sha256 TEXT NOT NULL UNIQUE,document_json TEXT NOT NULL,record_count INTEGER NOT NULL,accepted_count INTEGER NOT NULL,created_at TEXT NOT NULL)",
+            "CREATE INDEX IF NOT EXISTS idx_dialogue_runs_created_at ON dialogue_runs(created_at,id)",
+        ),
+    ),
 )
 
 
